@@ -1,0 +1,40 @@
+// Esquema de la base de datos. Cada cambio aquí se aplica con una migración:
+//   pnpm run db:migrate --name <descripcion>
+
+generator client {
+  provider            = "prisma-client"
+  output              = "../src/generated/prisma"
+  moduleFormat        = "esm"
+  importFileExtension = "js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+/// Software de facturación electrónica (proveedor autorizado por la DIAN) que usa la empresa.
+enum ProveedorFacturacion {
+  ALEGRA
+  SIIGO
+}
+
+/// SIMPLE: una línea genérica con el total. DETALLADO: una línea por producto del catálogo.
+enum ModoLineas {
+  SIMPLE
+  DETALLADO
+}
+
+/// Comercio que usa el bot. Todas las tablas futuras (clientes, borradores, facturas)
+/// pertenecen a una empresa: así el sistema es multiempresa desde el inicio.
+model Empresa {
+  id            String               @id @default(uuid(7)) @db.Uuid
+  nombre        String
+  /// NIT sin dígito de verificación.
+  nit           String               @unique
+  proveedor     ProveedorFacturacion
+  modoLineas    ModoLineas           @default(SIMPLE) @map("modo_lineas")
+  creadaEn      DateTime             @default(now()) @map("creada_en") @db.Timestamptz
+  actualizadaEn DateTime             @updatedAt @map("actualizada_en") @db.Timestamptz
+
+  @@map("empresas")
+}

@@ -7,6 +7,9 @@ build/
 coverage/
 *.tsbuildinfo
 
+# Cliente de Prisma generado (se regenera con `pnpm run db:generate` o al instalar)
+apps/api/src/generated/
+
 # Secretos y configuración local (nunca subir)
 .env
 .env.*

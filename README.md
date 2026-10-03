@@ -54,7 +54,7 @@ this week?").
 | Channel | WhatsApp Business Cloud API (dedicated bot number) | Official and stable; unofficial libraries risk the number being banned | Baileys / whatsapp-web.js |
 | DIAN issuing | Through a provider (Alegra → Siigo) | They handle DIAN certification, digital signatures and UBL 2.1 | Own DIAN integration (future) |
 | Backend | TypeScript + NestJS | Modules + dependency injection; same language as the future web dashboard | Python + FastAPI, Kotlin + Spring |
-| Database | PostgreSQL + Prisma | Relational, accounting-grade data; typed ORM | MySQL, TypeORM, Drizzle |
+| Database | PostgreSQL + Prisma 7 (UUID v7 ids, snake_case tables, multi-tenant from day one via `Empresa`) | Relational, accounting-grade data; typed ORM | MySQL, TypeORM, Drizzle |
 | Validation | Zod | Validates AI output and configuration, and generates types | class-validator |
 | Queue | Redis + BullMQ | AI is slow; the webhook must answer fast | — |
 | AI | Local (Ollama `qwen2.5vl:3b`), swappable for cloud models | Zero cost while testing | Gemini, Groq, OpenRouter |
@@ -83,6 +83,7 @@ fnm use                       # switch to the Node version in .nvmrc
 cd apps/api
 pnpm install
 cp .env.example .env          # first time only; adjust values if needed
+pnpm run db:migrate           # create/update the PostgreSQL tables
 pnpm run start:dev            # server at http://localhost:3000 with hot reload
 pnpm test                     # unit tests
 ```

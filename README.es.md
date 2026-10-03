@@ -103,6 +103,20 @@ También: crear clientes sin facturar, notas crédito y reportes ("¿cuánto ven
   variable o tiene un formato inválido, la app no arranca y dice cuál (*fail fast*). `ConfigService`
   tipado. `.env.example` versionado; `.env` ignorado. `.gitattributes` con finales de línea LF.
 - **Publicación:** el repositorio se hizo público en GitHub con documentación bilingüe.
+- **1.4b** Base de datos con **Prisma 7**:
+  - `prisma/schema.prisma` con el primer modelo, **`Empresa`** (nombre, NIT único, proveedor
+    `ALEGRA`/`SIIGO`, modo de líneas `SIMPLE`/`DETALLADO`, fechas). Es la raíz de la multiempresa.
+  - Convenciones: IDs **UUID v7** (únicos y ordenables por fecha), tablas y columnas en *snake_case*
+    en PostgreSQL (`@map`) y *camelCase* en TypeScript, fechas `timestamptz`.
+  - Primera migración `crear_empresas` aplicada. `prisma.config.ts` para el CLI.
+  - Desde Prisma 7 la conexión va por un **adaptador** (`@prisma/adapter-pg`) y el cliente se genera
+    en `src/generated/prisma` (ignorado por git; se regenera al instalar).
+  - `PrismaService` global e inyectable que toma `DATABASE_URL` de la configuración validada y cierra
+    la conexión al apagar la app.
+  - pnpm bloquea por seguridad los scripts de instalación; solo se autorizaron `prisma` y
+    `@prisma/engines` (`allowBuilds` en `apps/api/pnpm-workspace.yaml`).
+  - Verificado: build, lint y tests ✅; la app arranca con Prisma y una prueba de crear, leer y borrar
+    una empresa funcionó contra PostgreSQL.
 
 ## 5. Cómo ejecutar
 
@@ -115,6 +129,7 @@ fnm use                       # activa la versión de Node de .nvmrc
 cd apps/api
 pnpm install
 cp .env.example .env          # solo la primera vez; ajusta valores si hace falta
+pnpm run db:migrate           # crea/actualiza las tablas en PostgreSQL
 pnpm run start:dev            # servidor en http://localhost:3000 con recarga automática
 pnpm test                     # tests unitarios
 ```
