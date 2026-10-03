@@ -1,0 +1,50 @@
+# Servicios de infraestructura para desarrollo local.
+# Uso:  docker compose up -d      (levantar)
+#       docker compose ps         (ver estado y salud)
+#       docker compose down       (apagar; los datos se conservan en los volúmenes)
+#
+# Las credenciales de abajo son SOLO para desarrollo. Se pueden sobrescribir con variables
+# de entorno o con un archivo .env en esta carpeta (excluido de git).
+
+name: facturacion
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-facturacion}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-facturacion_dev}
+      POSTGRES_DB: ${POSTGRES_DB:-facturacion}
+    ports:
+      # 5433 en el equipo para no chocar con un PostgreSQL local que use el 5432.
+      # 127.0.0.1 = solo accesible desde esta máquina, no desde la red.
+      - "127.0.0.1:${POSTGRES_PORT:-5433}:5432"
+    volumes:
+      # Desde PostgreSQL 18 la imagen oficial guarda los datos bajo /var/lib/postgresql.
+      - postgres_data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    image: redis:8-alpine
+    # appendonly: persiste los trabajos de la cola en disco.
+    # noeviction: BullMQ exige que Redis nunca borre claves por falta de memoria.
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "noeviction"]
+    ports:
+      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:

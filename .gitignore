@@ -1,0 +1,34 @@
+# Dependencias
+node_modules/
+
+# Compilados
+dist/
+build/
+coverage/
+*.tsbuildinfo
+
+# Secretos y configuración local (nunca subir)
+.env
+.env.*
+!.env.example
+
+# Datos reales de clientes / facturas de prueba (Ley 1581 - Habeas Data)
+muestras/
+*.jpg
+*.jpeg
+*.png
+*.heic
+
+# Logs
+*.log
+logs/
+
+# Sistema operativo y editores
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# Instrucciones locales para Claude Code (personales, no se publican)
+CLAUDE.md

@@ -1,0 +1,3 @@
+# Finales de línea LF en todo el repo, sin importar el sistema operativo.
+# Evita diferencias falsas entre Windows (CRLF) y Linux/Docker (LF).
+* text=auto eol=lf

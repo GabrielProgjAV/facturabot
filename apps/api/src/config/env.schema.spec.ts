@@ -1,0 +1,37 @@
+import { validateEnv } from './env.schema.js';
+
+const envValido = {
+  DATABASE_URL: 'postgresql://usuario:clave@localhost:5433/facturacion',
+  REDIS_URL: 'redis://localhost:6379',
+};
+
+describe('validateEnv', () => {
+  it('acepta una configuración válida y aplica valores por defecto', () => {
+    const env = validateEnv(envValido);
+
+    expect(env.NODE_ENV).toBe('development');
+    expect(env.PORT).toBe(3000);
+  });
+
+  it('convierte PORT de texto a número', () => {
+    const env = validateEnv({ ...envValido, PORT: '4000' });
+
+    expect(env.PORT).toBe(4000);
+  });
+
+  it('falla si falta DATABASE_URL', () => {
+    const { DATABASE_URL: _omitida, ...sinBaseDeDatos } = envValido;
+
+    expect(() => validateEnv(sinBaseDeDatos)).toThrow(/DATABASE_URL/);
+  });
+
+  it('falla si DATABASE_URL no es de PostgreSQL', () => {
+    expect(() =>
+      validateEnv({ ...envValido, DATABASE_URL: 'mysql://localhost/db' }),
+    ).toThrow(/DATABASE_URL/);
+  });
+
+  it('falla si PORT no es un número', () => {
+    expect(() => validateEnv({ ...envValido, PORT: 'abc' })).toThrow(/PORT/);
+  });
+});
