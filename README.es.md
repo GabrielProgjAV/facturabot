@@ -33,15 +33,16 @@ También: crear clientes sin facturar, notas crédito y reportes ("¿cuánto ven
 
 | Fase | Descripción | Estado |
 |---|---|---|
-| 0 | Validación sin código (fotos, IA, Alegra, Meta) | 🟡 En curso |
-| 1 | Base del proyecto (NestJS, Docker, configuración, base de datos) | 🟡 En curso |
-| 2 | Bot eco en WhatsApp | ⚪ Pendiente |
+| 0 | Validación sin código (fotos, IA, Alegra, bot de Telegram) | 🟡 En curso |
+| 1 | Base del proyecto (NestJS, Docker, configuración, base de datos) | ✅ Hecha |
+| 2 | Bot eco en **Telegram** (puerto `CanalMensajeria`) | ⚪ Pendiente |
 | 3 | Lectura de fotos con IA | ⚪ Pendiente |
 | 4 | Conexión con Alegra | ⚪ Pendiente |
 | 5 | Flujo conversacional (borrador → corrección → aprobación) | ⚪ Pendiente |
 | 6 | Emisión de factura | ⚪ Pendiente |
 | 7 | Clientes sin factura y notas crédito | ⚪ Pendiente |
 | 8 | Reportes | ⚪ Pendiente |
+| 8.5 | Adaptador **WhatsApp** (Meta Cloud API o Twilio), antes del piloto real | ⚪ Pendiente |
 | 9 | Adaptador Siigo | ⚪ Pendiente |
 | 10 | Multiempresa y panel web | ⚪ Pendiente |
 
@@ -49,14 +50,15 @@ También: crear clientes sin facturar, notas crédito y reportes ("¿cuánto ven
 
 | Decisión | Elección | Motivo | Alternativa considerada |
 |---|---|---|---|
-| Canal | WhatsApp Business Cloud API (número propio del bot) | Oficial y estable; las librerías no oficiales arriesgan el bloqueo del número | Baileys / whatsapp-web.js |
+| Canal (desarrollo) | **Telegram** (grammY, *long polling*) detrás del puerto `CanalMensajeria` | Sin trámites ni datos de empresa; acepta fotos, texto y voz; no necesita exponer el PC a internet | Simulador local, Twilio sandbox |
+| Canal (producción) | WhatsApp Business Cloud API (número propio del bot) o Twilio, como un adaptador más (fase 8.5) | Es lo que usan los comercios; las librerías no oficiales arriesgan el bloqueo del número. Meta exige datos de empresa, por eso se pospone | Baileys / whatsapp-web.js |
 | Emisión DIAN | Vía proveedor (Alegra → Siigo) | Ellos asumen la habilitación, firma digital y UBL 2.1 | Software propio ante la DIAN (futuro) |
 | Backend | TypeScript + NestJS | Módulos + inyección de dependencias; mismo lenguaje que el futuro panel web | Python + FastAPI, Kotlin + Spring |
 | Base de datos | PostgreSQL + Prisma | Datos relacionales y contables; ORM tipado | MySQL, TypeORM, Drizzle |
 | Validación | Zod | Valida la salida de la IA y la configuración, y genera tipos | class-validator |
 | Cola | Redis + BullMQ | La IA tarda; el webhook debe responder rápido | — |
 | IA | Local (Ollama `qwen2.5vl:3b`) intercambiable por nube | Costo $0 para pruebas | Gemini, Groq, OpenRouter |
-| Arquitectura | Puertos y adaptadores (`ProveedorFacturacion`, `LectorDeFacturas`, `Transcriptor`) | Cambiar de proveedor o de IA es configuración, no reescribir | Llamar a las APIs directamente |
+| Arquitectura | Puertos y adaptadores (`CanalMensajeria`, `ProveedorFacturacion`, `LectorDeFacturas`, `Transcriptor`) | Cambiar de proveedor o de IA es configuración, no reescribir | Llamar a las APIs directamente |
 | Principio | Humano en el ciclo | Nada se emite sin aprobación explícita | — |
 | Entradas | Foto, texto y voz → un mismo `BorradorFactura` | La letra manuscrita es difícil; voz y texto son alternativas más fiables | Solo foto |
 | Voz → texto | Whisper (whisper.cpp local) + FFmpeg | Gratis; WhatsApp envía audio `.ogg` | API de Groq (Whisper en la nube) |
@@ -85,6 +87,11 @@ También: crear clientes sin facturar, notas crédito y reportes ("¿cuánto ven
   - Si la suma de ítems ≠ total escrito → hay un dato mal leído → el bot pregunta.
 - **0.2d** Reglas de negocio confirmadas para el piloto: total escrito sin IVA, una sola línea con un
   producto genérico, descripción genérica válida (confirmado con un contador).
+
+- **0.4 (cambio de plan)** Crear la app de WhatsApp en Meta exige datos de empresa y un dominio web.
+  Para no frenar el desarrollo, el canal se abstrae con el puerto `CanalMensajeria`: se desarrolla con
+  **Telegram** (bot creado con @BotFather) y WhatsApp se agrega como adaptador antes del piloto
+  (fase 8.5). Si Meta pide un sitio web, se puede usar una página gratuita en GitHub Pages.
 
 ### Fase 1 — Base del proyecto
 - **1.1** Repositorio git, `.gitignore` (excluye secretos, `node_modules` y fotos con datos reales).
@@ -117,6 +124,18 @@ También: crear clientes sin facturar, notas crédito y reportes ("¿cuánto ven
     `@prisma/engines` (`allowBuilds` en `apps/api/pnpm-workspace.yaml`).
   - Verificado: build, lint y tests ✅; la app arranca con Prisma y una prueba de crear, leer y borrar
     una empresa funcionó contra PostgreSQL.
+
+### Fase 2 — Bot eco en Telegram
+- **2.1** Bot creado con @BotFather. `TELEGRAM_BOT_TOKEN` es obligatorio y se valida al arrancar
+  (formato `<id>:<secreto>`); con el token vacío la app no arranca y lo indica.
+- **2.2** **grammY** + `src/mensajeria/`:
+  - `mensaje.ts`: tipo `MensajeEntrante` (texto, imagen, audio, otro) y `responderEco()`, lógica
+    **independiente del canal** (WhatsApp la reutilizará). 4 tests.
+  - `telegram.service.ts`: adaptador que traduce mensajes de Telegram a `MensajeEntrante` y responde.
+    *Long polling*: no requiere ngrok ni exponer el equipo.
+  - `enableShutdownHooks()`: al apagar la app se detienen el bot y la conexión a la base de datos.
+  - La interfaz formal `CanalMensajeria` se escribirá cuando llegue el segundo canal (WhatsApp); hoy
+    con un solo canal sería una abstracción sin uso.
 
 ## 5. Cómo ejecutar
 

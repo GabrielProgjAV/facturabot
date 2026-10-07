@@ -12,6 +12,13 @@ export const envSchema = z.object({
   PORT: z.coerce.number().int().positive().default(3000),
   DATABASE_URL: z.url({ protocol: /^postgres(ql)?$/ }),
   REDIS_URL: z.url({ protocol: /^rediss?$/ }),
+  // Formato de BotFather: <id numérico>:<secreto>
+  TELEGRAM_BOT_TOKEN: z
+    .string()
+    .regex(
+      /^\d+:[\w-]{30,}$/,
+      'Token de Telegram inválido (pídelo a @BotFather)',
+    ),
 });
 
 export type Env = z.infer<typeof envSchema>;

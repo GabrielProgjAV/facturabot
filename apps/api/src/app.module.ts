@@ -3,6 +3,7 @@ import { ConfigModule } from '@nestjs/config';
 import { AppController } from './app.controller.js';
 import { AppService } from './app.service.js';
 import { validateEnv } from './config/env.schema.js';
+import { TelegramService } from './mensajeria/telegram.service.js';
 import { PrismaModule } from './prisma/prisma.module.js';
 
 @Module({
@@ -15,6 +16,6 @@ import { PrismaModule } from './prisma/prisma.module.js';
     PrismaModule,
   ],
   controllers: [AppController],
-  providers: [AppService],
+  providers: [AppService, TelegramService],
 })
 export class AppModule {}

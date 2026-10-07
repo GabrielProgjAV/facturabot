@@ -35,3 +35,9 @@ Thumbs.db
 
 # Instrucciones locales para Claude Code (personales, no se publican)
 CLAUDE.md
+
+# Grafo de conocimiento generado por graphify (local)
+graphify-out/
+
+# Subagentes locales de Claude Code
+.claude/agents/

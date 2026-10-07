@@ -3,6 +3,7 @@ import { validateEnv } from './env.schema.js';
 const envValido = {
   DATABASE_URL: 'postgresql://usuario:clave@localhost:5433/facturacion',
   REDIS_URL: 'redis://localhost:6379',
+  TELEGRAM_BOT_TOKEN: '123456789:AAH_token-de-prueba-falso-1234567890',
 };
 
 describe('validateEnv', () => {
@@ -29,6 +30,12 @@ describe('validateEnv', () => {
     expect(() =>
       validateEnv({ ...envValido, DATABASE_URL: 'mysql://localhost/db' }),
     ).toThrow(/DATABASE_URL/);
+  });
+
+  it('falla si TELEGRAM_BOT_TOKEN está vacío', () => {
+    expect(() => validateEnv({ ...envValido, TELEGRAM_BOT_TOKEN: '' })).toThrow(
+      /TELEGRAM_BOT_TOKEN/,
+    );
   });
 
   it('falla si PORT no es un número', () => {

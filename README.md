@@ -35,15 +35,16 @@ this week?").
 
 | Phase | Description | Status |
 |---|---|---|
-| 0 | No-code validation (photos, AI, Alegra, Meta) | 🟡 In progress |
-| 1 | Project foundation (NestJS, Docker, config, database) | 🟡 In progress |
-| 2 | WhatsApp echo bot | ⚪ Pending |
+| 0 | No-code validation (photos, AI, Alegra, Telegram bot) | 🟡 In progress |
+| 1 | Project foundation (NestJS, Docker, config, database) | ✅ Done |
+| 2 | **Telegram** echo bot (`CanalMensajeria` port) | ⚪ Pending |
 | 3 | Reading photos with AI | ⚪ Pending |
 | 4 | Alegra integration | ⚪ Pending |
 | 5 | Conversational flow (draft → correction → approval) | ⚪ Pending |
 | 6 | Invoice issuing | ⚪ Pending |
 | 7 | Customers without invoice, credit notes | ⚪ Pending |
 | 8 | Reports | ⚪ Pending |
+| 8.5 | **WhatsApp** adapter (Meta Cloud API or Twilio), before the real pilot | ⚪ Pending |
 | 9 | Siigo adapter | ⚪ Pending |
 | 10 | Multi-tenant + web dashboard | ⚪ Pending |
 
@@ -51,14 +52,15 @@ this week?").
 
 | Decision | Choice | Why | Alternative considered |
 |---|---|---|---|
-| Channel | WhatsApp Business Cloud API (dedicated bot number) | Official and stable; unofficial libraries risk the number being banned | Baileys / whatsapp-web.js |
+| Channel (development) | **Telegram** (grammY, long polling) behind the `CanalMensajeria` port | No business paperwork; supports photos, text and voice; no need to expose the machine to the internet | Local simulator, Twilio sandbox |
+| Channel (production) | WhatsApp Business Cloud API (dedicated bot number) or Twilio, as another adapter (phase 8.5) | It's what shops use; unofficial libraries risk the number being banned. Meta requires business details, so it's deferred | Baileys / whatsapp-web.js |
 | DIAN issuing | Through a provider (Alegra → Siigo) | They handle DIAN certification, digital signatures and UBL 2.1 | Own DIAN integration (future) |
 | Backend | TypeScript + NestJS | Modules + dependency injection; same language as the future web dashboard | Python + FastAPI, Kotlin + Spring |
 | Database | PostgreSQL + Prisma 7 (UUID v7 ids, snake_case tables, multi-tenant from day one via `Empresa`) | Relational, accounting-grade data; typed ORM | MySQL, TypeORM, Drizzle |
 | Validation | Zod | Validates AI output and configuration, and generates types | class-validator |
 | Queue | Redis + BullMQ | AI is slow; the webhook must answer fast | — |
 | AI | Local (Ollama `qwen2.5vl:3b`), swappable for cloud models | Zero cost while testing | Gemini, Groq, OpenRouter |
-| Architecture | Ports and adapters (`ProveedorFacturacion`, `LectorDeFacturas`, `Transcriptor`) | Switching provider or AI model is configuration, not a rewrite | Calling APIs directly |
+| Architecture | Ports and adapters (`CanalMensajeria`, `ProveedorFacturacion`, `LectorDeFacturas`, `Transcriptor`) | Switching provider or AI model is configuration, not a rewrite | Calling APIs directly |
 | Principle | Human in the loop | Nothing is issued without explicit approval | — |
 | Inputs | Photo, text and voice → one `BorradorFactura` (invoice draft) | Handwriting is hard to read; voice and text are more reliable fallbacks | Photo only |
 | Speech-to-text | Whisper (local whisper.cpp) + FFmpeg | Free; WhatsApp sends `.ogg` audio | Groq API (cloud Whisper) |
