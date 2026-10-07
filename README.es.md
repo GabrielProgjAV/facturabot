@@ -36,7 +36,7 @@ También: crear clientes sin facturar, notas crédito y reportes ("¿cuánto ven
 | 0 | Validación sin código (IA, Alegra, bot de Telegram) | 🟡 En curso |
 | 1 | Base del proyecto (NestJS, Docker, configuración, base de datos) | ✅ Hecha |
 | 2 | Bot eco en **Telegram** | ✅ Hecha |
-| 3 | **Factura por texto:** la IA entiende el mensaje, pide lo que falta, muestra el borrador y espera la aprobación humana | ⚪ Pendiente |
+| 3 | **Factura por texto:** la IA entiende el mensaje, pide lo que falta, muestra el borrador y espera la aprobación humana | ✅ Hecha |
 | 4 | **Factura por voz:** nota de voz → texto (Whisper) → mismo flujo de la fase 3 | ⚪ Pendiente |
 | 5 | **Facturas de compra en PDF → base de inventario:** leer pedidos de proveedores y registrar las entradas de productos (todavía sin descontar ventas) | ⚪ Pendiente |
 | 6 | Conexión con Alegra y emisión real tras la aprobación | ⚪ Pendiente |

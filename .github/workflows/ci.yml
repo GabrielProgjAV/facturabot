@@ -1,0 +1,34 @@
+# Verificación automática: corre en cada Pull Request y en cada cambio que llega a main.
+# Si algo falla, el PR queda en rojo y no se puede integrar (main está protegida).
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  api:
+    name: api (lint, tipos, tests)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/api
+    env:
+      # El CLI de Prisma lo exige para generar el cliente; los tests no se conectan a la base.
+      DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 12
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+          cache-dependency-path: apps/api/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run lint
+      - run: pnpm exec prettier --check src test
+      - run: pnpm exec tsc --noEmit -p tsconfig.json
+      - run: pnpm test
