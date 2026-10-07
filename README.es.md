@@ -194,6 +194,22 @@ También: crear clientes sin facturar, notas crédito y reportes ("¿cuánto ven
   mensaje de ayuda cambia según el caso (pedir datos u ofrecer "sí"). La emisión real llega en la
   fase 6. 11 tests nuevos (59/59 ✅).
 
+### Flujo de trabajo con ramas (después de la fase 3)
+- Se adopta **GitHub Flow**: `main` siempre estable y protegida en GitHub (exige Pull Request y CI en
+  verde, también para administradores; sin *force push*). Cada paso va en su rama (`feat/`, `fix/`,
+  `docs/`, `chore/`) y entra a `main` por PR con *squash*.
+- **CI** con GitHub Actions (`.github/workflows/ci.yml`): instalación, Oxlint, Prettier, `tsc` y tests
+  en cada PR. Primer PR: #1.
+- **Tags** por fase como puntos seguros para volver: `v0.1.0`, `v0.2.0`, `v0.3.0`.
+
+### Fase 4 — Factura por voz
+- **4.1** Servicio de transcripción en Docker: `onerahmet/openai-whisper-asr-webservice:v1.10.0`
+  (faster-whisper en CPU, modelo `small`, FFmpeg incluido, puerto `127.0.0.1:9000`, modelo guardado en
+  el volumen `whisper_cache`). Se eligió Docker para no instalar nada en Windows. La imagen ocupa
+  ~8,2 GB en disco (~2,6 GB de descarga). Prueba con una nota de voz sintética de ~10 s: **~5 s** de
+  transcripción, texto correcto salvo "la canegra" (laca negra) y la cédula escrita como
+  "1-0-2-0-3-0-4-0-5-0" → se normalizará en código.
+
 ## 5. Cómo ejecutar
 
 Requisitos: [fnm](https://github.com/Schniz/fnm) (Node 24 según `.nvmrc`), [pnpm](https://pnpm.io) y

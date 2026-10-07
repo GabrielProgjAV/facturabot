@@ -45,6 +45,21 @@ services:
       retries: 10
     restart: unless-stopped
 
+  whisper:
+    # Transcripción de voz a texto (faster-whisper en CPU). Trae FFmpeg: acepta el .ogg de Telegram.
+    # API: POST /asr?task=transcribe&language=es&output=json (campo multipart "audio_file").
+    image: onerahmet/openai-whisper-asr-webservice:v1.10.0
+    environment:
+      ASR_ENGINE: faster_whisper
+      ASR_MODEL: ${WHISPER_MODELO:-small}
+    ports:
+      - "127.0.0.1:${WHISPER_PORT:-9000}:9000"
+    volumes:
+      # El modelo se descarga la primera vez (~500 MB para "small") y queda guardado aquí.
+      - whisper_cache:/root/.cache
+    restart: unless-stopped
+
 volumes:
   postgres_data:
   redis_data:
+  whisper_cache:
