@@ -215,6 +215,13 @@ También: crear clientes sin facturar, notas crédito y reportes ("¿cuánto ven
   "🎤 Entendí: …". Límite de **2 minutos** por nota para no bloquear la CPU. La URL de descarga lleva
   el token del bot, por eso nunca se registra en los logs. Sin dependencias nuevas (`fetch`,
   `FormData` y `Blob` vienen con Node 24).
+- **4.2b** Precisión de la transcripción. Problema real: "NIT 900111222" se transcribió "knit
+  90011122". Se midieron configuraciones con 6 audios de prueba (2 voces sintéticas, 3 frases con NIT
+  o cédula): con `small`, solo 1 de 6 identificaciones salió exacta; el modelo **pierde dígitos
+  repetidos** (111 → 11, 999 → 99). Se agregó un **contexto del negocio** (`initial_prompt`) y el
+  **filtro de voz** (`vad_filter`): mejora las palabras ("laca negra", "El Tornillo", "80 mil") pero
+  **no** los números (siguió 1/6). Lección: en una primera medición el contexto incluía el mismo NIT
+  de la prueba y daba 3/6; sin ese dato de prueba el resultado real era 1/6.
 
 ## 5. Cómo ejecutar
 
