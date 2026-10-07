@@ -38,6 +38,25 @@ describe('validateEnv', () => {
     );
   });
 
+  it('sin TELEGRAM_CHATS_PERMITIDOS no permite ningún chat', () => {
+    expect(validateEnv(envValido).TELEGRAM_CHATS_PERMITIDOS).toEqual([]);
+  });
+
+  it('convierte la lista de chats permitidos en números', () => {
+    const env = validateEnv({
+      ...envValido,
+      TELEGRAM_CHATS_PERMITIDOS: '123, -456',
+    });
+
+    expect(env.TELEGRAM_CHATS_PERMITIDOS).toEqual([123, -456]);
+  });
+
+  it('falla si un chat permitido no es numérico', () => {
+    expect(() =>
+      validateEnv({ ...envValido, TELEGRAM_CHATS_PERMITIDOS: '123,abc' }),
+    ).toThrow(/TELEGRAM_CHATS_PERMITIDOS/);
+  });
+
   it('falla si PORT no es un número', () => {
     expect(() => validateEnv({ ...envValido, PORT: 'abc' })).toThrow(/PORT/);
   });

@@ -35,25 +35,26 @@ this week?").
 
 | Phase | Description | Status |
 |---|---|---|
-| 0 | No-code validation (photos, AI, Alegra, Telegram bot) | 🟡 In progress |
+| 0 | No-code validation (AI, Alegra, Telegram bot) | 🟡 In progress |
 | 1 | Project foundation (NestJS, Docker, config, database) | ✅ Done |
-| 2 | **Telegram** echo bot (`CanalMensajeria` port) | ⚪ Pending |
-| 3 | Reading photos with AI | ⚪ Pending |
-| 4 | Alegra integration | ⚪ Pending |
-| 5 | Conversational flow (draft → correction → approval) | ⚪ Pending |
-| 6 | Invoice issuing | ⚪ Pending |
+| 2 | **Telegram** echo bot | ✅ Done |
+| 3 | **Invoice by text:** the AI understands the message, asks for what's missing, shows the draft and waits for human approval | ⚪ Pending |
+| 4 | **Invoice by voice:** voice note → text (Whisper) → same flow as phase 3 | ⚪ Pending |
+| 5 | **Purchase invoices (PDF) → inventory baseline:** read supplier orders and record stock entries (sales not deducted yet) | ⚪ Pending |
+| 6 | Alegra integration and real issuing after approval | ⚪ Pending |
 | 7 | Customers without invoice, credit notes | ⚪ Pending |
-| 8 | Reports | ⚪ Pending |
-| 8.5 | **WhatsApp** adapter (Meta Cloud API or Twilio), before the real pilot | ⚪ Pending |
-| 9 | Siigo adapter | ⚪ Pending |
-| 10 | Multi-tenant + web dashboard | ⚪ Pending |
+| 8 | Reports (sales and inventory) and **deducting sold items from inventory** | ⚪ Pending |
+| 9 | Reading **photos** of handwritten invoices (with a better vision model) | ⚪ Pending |
+| 10 | **WhatsApp** adapter (Meta Cloud API or Twilio), before the real pilot | ⚪ Pending |
+| 11 | Siigo adapter | ⚪ Pending |
+| 12 | Multi-tenant + web dashboard | ⚪ Pending |
 
 ## 3. Architecture decisions
 
 | Decision | Choice | Why | Alternative considered |
 |---|---|---|---|
 | Channel (development) | **Telegram** (grammY, long polling) behind the `CanalMensajeria` port | No business paperwork; supports photos, text and voice; no need to expose the machine to the internet | Local simulator, Twilio sandbox |
-| Channel (production) | WhatsApp Business Cloud API (dedicated bot number) or Twilio, as another adapter (phase 8.5) | It's what shops use; unofficial libraries risk the number being banned. Meta requires business details, so it's deferred | Baileys / whatsapp-web.js |
+| Channel (production) | WhatsApp Business Cloud API (dedicated bot number) or Twilio, as another adapter (phase 10) | It's what shops use; unofficial libraries risk the number being banned. Meta requires business details, so it's deferred | Baileys / whatsapp-web.js |
 | DIAN issuing | Through a provider (Alegra → Siigo) | They handle DIAN certification, digital signatures and UBL 2.1 | Own DIAN integration (future) |
 | Backend | TypeScript + NestJS | Modules + dependency injection; same language as the future web dashboard | Python + FastAPI, Kotlin + Spring |
 | Database | PostgreSQL + Prisma 7 (UUID v7 ids, snake_case tables, multi-tenant from day one via `Empresa`) | Relational, accounting-grade data; typed ORM | MySQL, TypeORM, Drizzle |

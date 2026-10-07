@@ -33,25 +33,26 @@ También: crear clientes sin facturar, notas crédito y reportes ("¿cuánto ven
 
 | Fase | Descripción | Estado |
 |---|---|---|
-| 0 | Validación sin código (fotos, IA, Alegra, bot de Telegram) | 🟡 En curso |
+| 0 | Validación sin código (IA, Alegra, bot de Telegram) | 🟡 En curso |
 | 1 | Base del proyecto (NestJS, Docker, configuración, base de datos) | ✅ Hecha |
-| 2 | Bot eco en **Telegram** (puerto `CanalMensajeria`) | ⚪ Pendiente |
-| 3 | Lectura de fotos con IA | ⚪ Pendiente |
-| 4 | Conexión con Alegra | ⚪ Pendiente |
-| 5 | Flujo conversacional (borrador → corrección → aprobación) | ⚪ Pendiente |
-| 6 | Emisión de factura | ⚪ Pendiente |
+| 2 | Bot eco en **Telegram** | ✅ Hecha |
+| 3 | **Factura por texto:** la IA entiende el mensaje, pide lo que falta, muestra el borrador y espera la aprobación humana | ⚪ Pendiente |
+| 4 | **Factura por voz:** nota de voz → texto (Whisper) → mismo flujo de la fase 3 | ⚪ Pendiente |
+| 5 | **Facturas de compra en PDF → base de inventario:** leer pedidos de proveedores y registrar las entradas de productos (todavía sin descontar ventas) | ⚪ Pendiente |
+| 6 | Conexión con Alegra y emisión real tras la aprobación | ⚪ Pendiente |
 | 7 | Clientes sin factura y notas crédito | ⚪ Pendiente |
-| 8 | Reportes | ⚪ Pendiente |
-| 8.5 | Adaptador **WhatsApp** (Meta Cloud API o Twilio), antes del piloto real | ⚪ Pendiente |
-| 9 | Adaptador Siigo | ⚪ Pendiente |
-| 10 | Multiempresa y panel web | ⚪ Pendiente |
+| 8 | Reportes (ventas e inventario) y **descuento del inventario por ventas** | ⚪ Pendiente |
+| 9 | Lectura de **fotos** de facturas manuscritas (con un modelo de visión mejor) | ⚪ Pendiente |
+| 10 | Adaptador **WhatsApp** (Meta Cloud API o Twilio), antes del piloto real | ⚪ Pendiente |
+| 11 | Adaptador Siigo | ⚪ Pendiente |
+| 12 | Multiempresa y panel web | ⚪ Pendiente |
 
 ## 3. Decisiones de arquitectura
 
 | Decisión | Elección | Motivo | Alternativa considerada |
 |---|---|---|---|
 | Canal (desarrollo) | **Telegram** (grammY, *long polling*) detrás del puerto `CanalMensajeria` | Sin trámites ni datos de empresa; acepta fotos, texto y voz; no necesita exponer el PC a internet | Simulador local, Twilio sandbox |
-| Canal (producción) | WhatsApp Business Cloud API (número propio del bot) o Twilio, como un adaptador más (fase 8.5) | Es lo que usan los comercios; las librerías no oficiales arriesgan el bloqueo del número. Meta exige datos de empresa, por eso se pospone | Baileys / whatsapp-web.js |
+| Canal (producción) | WhatsApp Business Cloud API (número propio del bot) o Twilio, como un adaptador más (fase 10) | Es lo que usan los comercios; las librerías no oficiales arriesgan el bloqueo del número. Meta exige datos de empresa, por eso se pospone | Baileys / whatsapp-web.js |
 | Emisión DIAN | Vía proveedor (Alegra → Siigo) | Ellos asumen la habilitación, firma digital y UBL 2.1 | Software propio ante la DIAN (futuro) |
 | Backend | TypeScript + NestJS | Módulos + inyección de dependencias; mismo lenguaje que el futuro panel web | Python + FastAPI, Kotlin + Spring |
 | Base de datos | PostgreSQL + Prisma | Datos relacionales y contables; ORM tipado | MySQL, TypeORM, Drizzle |
@@ -91,7 +92,11 @@ También: crear clientes sin facturar, notas crédito y reportes ("¿cuánto ven
 - **0.4 (cambio de plan)** Crear la app de WhatsApp en Meta exige datos de empresa y un dominio web.
   Para no frenar el desarrollo, el canal se abstrae con el puerto `CanalMensajeria`: se desarrolla con
   **Telegram** (bot creado con @BotFather) y WhatsApp se agrega como adaptador antes del piloto
-  (fase 8.5). Si Meta pide un sitio web, se puede usar una página gratuita en GitHub Pages.
+  (fase 10). Si Meta pide un sitio web, se puede usar una página gratuita en GitHub Pages.
+- **Replanificación (después de la fase 2):** como la IA, local o en la nube, lee mal las fotos de
+  facturas manuscritas, se priorizan las entradas más fiables: **texto** (fase 3), **voz** (fase 4) y
+  **PDF de facturas de compra**, que traen texto digital legible, para llevar el **inventario**
+  (fase 5). Las fotos pasan a la fase 9, con un modelo de visión mejor.
 
 ### Fase 1 — Base del proyecto
 - **1.1** Repositorio git, `.gitignore` (excluye secretos, `node_modules` y fotos con datos reales).
@@ -136,6 +141,58 @@ También: crear clientes sin facturar, notas crédito y reportes ("¿cuánto ven
   - `enableShutdownHooks()`: al apagar la app se detienen el bot y la conexión a la base de datos.
   - La interfaz formal `CanalMensajeria` se escribirá cuando llegue el segundo canal (WhatsApp); hoy
     con un solo canal sería una abstracción sin uso.
+- **2.3** Probado desde Telegram: texto, foto, nota de voz y sticker responden correctamente.
+
+### Fase 3 — Factura por texto
+- **3.1** El bot solo atiende **chats autorizados** (`TELEGRAM_CHATS_PERMITIDOS`, IDs separados por
+  comas). Vacío = nadie: seguro por defecto. A un chat no autorizado no se le procesa nada; se le
+  responde su ID de chat para poder autorizarlo. Se filtra por ID numérico (fijo) y no por *username*
+  (que se puede cambiar). 3 tests nuevos (14/14 ✅). Lección: Vitest no revisa tipos, por eso también
+  se corre `tsc --noEmit`.
+- **3.2** Lógica de la factura sin IA en `src/facturacion/factura.ts` (funciones puras):
+  - `parsePesos`: `"78.000"`, `"$78.000"`, `"78 mil"`, `"12,5 mil"` → número (punto = miles, coma =
+    decimales).
+  - `camposFaltantes`: nombre del cliente, NIT o cédula, total (el total puede salir de la suma de
+    ítems).
+  - `sumaNoCuadra`: detecta si los ítems no suman el total escrito (un dato mal leído).
+  - `calcularTotales`: subtotal + IVA 19 % redondeado a pesos = total a pagar.
+  - 23 tests nuevos (37/37 ✅), incluido el caso real de la fase 0 (13.000 leído en vez de 18.000).
+- **3.3** La IA entiende el texto: `InterpreteTextoService` envía el mensaje a **Ollama `qwen2.5:3b`**
+  con un **esquema JSON generado desde Zod** (*structured outputs*), así el modelo responde siempre
+  con la misma forma. Los valores se piden **como texto** y los convierte `parsePesos`. La respuesta se
+  valida otra vez con Zod. `resumenBorrador` arma el mensaje: cliente, ítems, subtotal, IVA, total, lo
+  que falta y la alerta de suma. El bot ya responde con el borrador a los mensajes de texto.
+  Medido: ~10 s la primera vez (carga del modelo), ~1,5 s después. 4 tests nuevos (41/41 ✅).
+- **3.3b** Error encontrado al probar: con "factura a Ana NIT 123 …" el modelo no detectaba el cliente
+  (4/7 aciertos en una prueba con mensajes de ejemplo); fallaba sobre todo cuando el NIT va justo
+  después del nombre. Solución: **few-shot prompting** (ejemplos dentro de las instrucciones) y la regla
+  de que el nombre nunca lleva "NIT", "CC" ni números. Resultado: 11/11, incluidos 4 mensajes distintos
+  de los ejemplos (para no medir con los mismos datos con que se "enseñó"). Igual, el usuario podrá
+  corregir cualquier dato en texto libre antes de aprobar (paso 3.4).
+- **3.4a** Tabla `borradores` (migración `crear_borradores`): el bot recuerda la factura en curso de
+  cada chat aunque la app se reinicie. Estado `PENDIENTE`/`APROBADO`/`CANCELADO`, datos en `JSONB`
+  (la forma del borrador aún cambia), `chat_id` como `BIGINT` (los IDs de Telegram superan el rango
+  de un entero de 32 bits) e índice por chat y estado. Sin `empresaId` hasta que exista la relación
+  chat → empresa.
+- **3.4b** Conversación: `ConversacionService` (en `facturacion/`, independiente del canal) decide
+  qué hacer con cada mensaje. Sin borrador pendiente crea uno; con borrador pendiente, la IA recibe el
+  **borrador actual + el mensaje** y devuelve el borrador completo corregido ("el NIT es…", "agrega…",
+  "quita…", "la laca vale…"). "cancelar" lo descarta (sin esto el usuario no podría empezar otra
+  factura). Se eligió corregir con la IA y no combinando campos en código porque entiende quitar o
+  cambiar ítems; el humano revisa antes de aprobar. 4 tests con dobles de prueba de Prisma y de la IA
+  (45/45 ✅). Prueba con el modelo real: 6/6 correcciones bien aplicadas, ~1–3 s cada una.
+- **3.4b-fix** Error encontrado al probar: al agregar un ítem, el IVA y el total no cambiaban. Causa:
+  la IA había puesto por su cuenta un "total" igual al primer ítem, aunque el usuario nunca escribió un
+  total; ese valor quedaba fijo como base. Solución en código (no en el prompt): `totalSegunMensaje`
+  solo acepta el total de la IA si el mensaje dice "total"; si no, conserva el anterior o suma los
+  ítems. 3 tests nuevos (48/48 ✅); la conversación del usuario reproducida con el modelo real ahora da
+  subtotal 90.000, IVA 17.100 y total 107.100.
+- **3.4c** Aprobación humana: "sí" (o "ok", "dale", "listo", "apruebo"…) aprueba el borrador
+  (estado `APROBADO`) **solo si está completo**: `motivoNoAprobable` lo impide si falta un dato o la
+  suma no cuadra, y dice por qué. Las palabras de aprobación se reconocen **con código, no con IA**, y
+  solo si el mensaje es únicamente esa palabra ("sí, pero el NIT es…" se trata como corrección). El
+  mensaje de ayuda cambia según el caso (pedir datos u ofrecer "sí"). La emisión real llega en la
+  fase 6. 11 tests nuevos (59/59 ✅).
 
 ## 5. Cómo ejecutar
 

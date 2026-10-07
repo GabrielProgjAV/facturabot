@@ -8,6 +8,7 @@ import { ConfigService } from '@nestjs/config';
 import { Bot } from 'grammy';
 import type { Message } from 'grammy/types';
 import type { Env } from '../config/env.schema.js';
+import { ConversacionService } from '../facturacion/conversacion.service.js';
 import { type MensajeEntrante, responderEco } from './mensaje.js';
 
 /**
@@ -22,8 +23,41 @@ export class TelegramService
   private readonly logger = new Logger(TelegramService.name);
   private readonly bot: Bot;
 
-  constructor(config: ConfigService<Env, true>) {
+  constructor(
+    config: ConfigService<Env, true>,
+    private readonly conversacion: ConversacionService,
+  ) {
     this.bot = new Bot(config.get('TELEGRAM_BOT_TOKEN', { infer: true }));
+
+    // Solo los chats autorizados pasan; al resto se le dice su ID para que lo puedan autorizar.
+    const permitidos = new Set(
+      config.get('TELEGRAM_CHATS_PERMITIDOS', { infer: true }),
+    );
+    this.bot.use(async (ctx, next) => {
+      if (ctx.chat && permitidos.has(ctx.chat.id)) return next();
+      this.logger.warn(`Mensaje rechazado del chat ${ctx.chat?.id}`);
+      if (ctx.chat)
+        await ctx.reply(
+          `No estás autorizado para usar este bot. Tu ID de chat es ${ctx.chat.id}.`,
+        );
+    });
+
+    this.bot.on('message:text', async (ctx) => {
+      await ctx.replyWithChatAction('typing');
+      try {
+        await ctx.reply(
+          await this.conversacion.responder(ctx.chat.id, ctx.message.text),
+        );
+      } catch (err) {
+        this.logger.error(
+          `Error interpretando texto: ${(err as Error).message}`,
+        );
+        await ctx.reply(
+          'No pude procesar el mensaje en este momento. Intenta de nuevo en un rato.',
+        );
+      }
+    });
+    // Fotos y voz llegan en sus fases (9 y 4); mientras tanto, se confirma la recepción.
     this.bot.on('message', (ctx) =>
       ctx.reply(responderEco(aMensajeEntrante(ctx.message))),
     );

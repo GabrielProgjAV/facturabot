@@ -24,6 +24,27 @@ enum ModoLineas {
   DETALLADO
 }
 
+enum EstadoBorrador {
+  PENDIENTE
+  APROBADO
+  CANCELADO
+}
+
+/// Factura en conversación con un chat. La app mantiene a lo sumo uno PENDIENTE por chat.
+/// `datos` guarda un BorradorFactura (src/facturacion/factura.ts) como JSON: su forma aún cambia.
+/// ponytail: sin empresaId hasta que exista la relación chat → empresa (piloto multiempresa).
+model Borrador {
+  id            String         @id @default(uuid(7)) @db.Uuid
+  chatId        BigInt         @map("chat_id")
+  estado        EstadoBorrador @default(PENDIENTE)
+  datos         Json
+  creadoEn      DateTime       @default(now()) @map("creado_en") @db.Timestamptz
+  actualizadoEn DateTime       @updatedAt @map("actualizado_en") @db.Timestamptz
+
+  @@index([chatId, estado])
+  @@map("borradores")
+}
+
 /// Comercio que usa el bot. Todas las tablas futuras (clientes, borradores, facturas)
 /// pertenecen a una empresa: así el sistema es multiempresa desde el inicio.
 model Empresa {
