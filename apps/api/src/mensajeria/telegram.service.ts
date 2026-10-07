@@ -9,7 +9,11 @@ import { Bot } from 'grammy';
 import type { Message } from 'grammy/types';
 import type { Env } from '../config/env.schema.js';
 import { ConversacionService } from '../facturacion/conversacion.service.js';
+import { TranscriptorService } from '../voz/transcriptor.service.js';
 import { type MensajeEntrante, responderEco } from './mensaje.js';
+
+/** Transcribir ocupa la CPU: una nota más larga bloquearía el equipo. */
+const DURACION_MAXIMA_VOZ_SEGUNDOS = 120;
 
 /**
  * Adaptador de Telegram: traduce mensajes de Telegram a MensajeEntrante y envía la respuesta.
@@ -22,12 +26,15 @@ export class TelegramService
 {
   private readonly logger = new Logger(TelegramService.name);
   private readonly bot: Bot;
+  private readonly token: string;
 
   constructor(
     config: ConfigService<Env, true>,
     private readonly conversacion: ConversacionService,
+    private readonly transcriptor: TranscriptorService,
   ) {
-    this.bot = new Bot(config.get('TELEGRAM_BOT_TOKEN', { infer: true }));
+    this.token = config.get('TELEGRAM_BOT_TOKEN', { infer: true });
+    this.bot = new Bot(this.token);
 
     // Solo los chats autorizados pasan; al resto se le dice su ID para que lo puedan autorizar.
     const permitidos = new Set(
@@ -57,7 +64,38 @@ export class TelegramService
         );
       }
     });
-    // Fotos y voz llegan en sus fases (9 y 4); mientras tanto, se confirma la recepción.
+    this.bot.on('message:voice', async (ctx) => {
+      if (ctx.message.voice.duration > DURACION_MAXIMA_VOZ_SEGUNDOS) {
+        await ctx.reply(
+          `La nota de voz es muy larga. Envía una de máximo ${DURACION_MAXIMA_VOZ_SEGUNDOS / 60} minutos.`,
+        );
+        return;
+      }
+      await ctx.replyWithChatAction('typing');
+      try {
+        const archivo = await ctx.getFile();
+        // La URL lleva el token: nunca se registra en los logs. El audio no se guarda en disco.
+        const descarga = await fetch(
+          `https://api.telegram.org/file/bot${this.token}/${archivo.file_path}`,
+        );
+        if (!descarga.ok) {
+          throw new Error(`Telegram respondió ${descarga.status}`);
+        }
+        const audio = new Uint8Array(await descarga.arrayBuffer());
+        const texto = await this.transcriptor.transcribir(audio, 'nota.ogg');
+        await ctx.reply(
+          texto ? `🎤 Entendí: "${texto}"` : '🎤 No escuché nada en la nota.',
+        );
+      } catch (err) {
+        this.logger.error(
+          `Error transcribiendo voz: ${(err as Error).message}`,
+        );
+        await ctx.reply(
+          'No pude procesar la nota de voz en este momento. Intenta de nuevo en un rato.',
+        );
+      }
+    });
+    // Las fotos llegan en la fase 9; mientras tanto, se confirma la recepción.
     this.bot.on('message', (ctx) =>
       ctx.reply(responderEco(aMensajeEntrante(ctx.message))),
     );

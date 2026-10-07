@@ -209,6 +209,12 @@ También: crear clientes sin facturar, notas crédito y reportes ("¿cuánto ven
   ~8,2 GB en disco (~2,6 GB de descarga). Prueba con una nota de voz sintética de ~10 s: **~5 s** de
   transcripción, texto correcto salvo "la canegra" (laca negra) y la cédula escrita como
   "1-0-2-0-3-0-4-0-5-0" → se normalizará en código.
+- **4.2** El bot recibe notas de voz: las descarga de Telegram **en memoria** (no se guardan en disco,
+  pueden tener datos de clientes), las envía a Whisper con `TranscriptorService`
+  (`src/voz/`, independiente del canal; `WHISPER_URL` con valor por defecto) y responde
+  "🎤 Entendí: …". Límite de **2 minutos** por nota para no bloquear la CPU. La URL de descarga lleva
+  el token del bot, por eso nunca se registra en los logs. Sin dependencias nuevas (`fetch`,
+  `FormData` y `Blob` vienen con Node 24).
 
 ## 5. Cómo ejecutar
 
