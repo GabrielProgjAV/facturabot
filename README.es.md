@@ -222,6 +222,10 @@ También: crear clientes sin facturar, notas crédito y reportes ("¿cuánto ven
   **filtro de voz** (`vad_filter`): mejora las palabras ("laca negra", "El Tornillo", "80 mil") pero
   **no** los números (siguió 1/6). Lección: en una primera medición el contexto incluía el mismo NIT
   de la prueba y daba 3/6; sin ese dato de prueba el resultado real era 1/6.
+- **4.2c** Modelo **`large-v3-turbo`** (~1,6 GB): con los mismos 6 audios, **4/6** identificaciones
+  exactas (vs 1/6) y "NIT" reconocido 6/6, a cambio de ~12 s por nota (vs ~3 s). Se adopta como modelo
+  por defecto. Sigue fallando con secuencias como 800999000, por eso el borrador marcará para revisión
+  el NIT o la cédula que vengan de una nota de voz (paso 4.4).
 
 ## 5. Cómo ejecutar
 

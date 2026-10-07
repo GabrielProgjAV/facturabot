@@ -51,11 +51,12 @@ services:
     image: onerahmet/openai-whisper-asr-webservice:v1.10.0
     environment:
       ASR_ENGINE: faster_whisper
-      ASR_MODEL: ${WHISPER_MODELO:-small}
+      # large-v3-turbo: 4/6 identificaciones exactas en pruebas vs 1/6 con "small", ~12 s por nota.
+      ASR_MODEL: ${WHISPER_MODELO:-large-v3-turbo}
     ports:
       - "127.0.0.1:${WHISPER_PORT:-9000}:9000"
     volumes:
-      # El modelo se descarga la primera vez (~500 MB para "small") y queda guardado aquí.
+      # El modelo se descarga la primera vez (~1,6 GB para large-v3-turbo) y queda guardado aquí.
       - whisper_cache:/root/.cache
     restart: unless-stopped
 
