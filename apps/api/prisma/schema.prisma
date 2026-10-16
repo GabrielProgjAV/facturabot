@@ -6,6 +6,9 @@ generator client {
   output              = "../src/generated/prisma"
   moduleFormat        = "esm"
   importFileExtension = "js"
+  // partialIndexes sigue en preview: Prisma va fijado en 7.10.0 exacta. Subirlo es un PR aparte que
+  // revisa sus notas de versión y corre `pnpm test:int` (prueba del índice único de Borrador).
+  previewFeatures     = ["partialIndexes"]
 }
 
 datasource db {
@@ -30,17 +33,22 @@ enum EstadoBorrador {
   CANCELADO
 }
 
-/// Factura en conversación con un chat. La app mantiene a lo sumo uno PENDIENTE por chat.
+/// Factura en conversación con un chat. A lo sumo uno PENDIENTE por chat (índice único parcial).
 /// `datos` guarda un BorradorFactura (src/facturacion/factura.ts) como JSON: su forma aún cambia.
-/// ponytail: sin empresaId hasta que exista la relación chat → empresa (piloto multiempresa).
+/// TODO: sin empresaId hasta que exista la relación chat → empresa (piloto multiempresa).
 model Borrador {
-  id            String         @id @default(uuid(7)) @db.Uuid
-  chatId        BigInt         @map("chat_id")
-  estado        EstadoBorrador @default(PENDIENTE)
-  datos         Json
-  creadoEn      DateTime       @default(now()) @map("creado_en") @db.Timestamptz
-  actualizadoEn DateTime       @updatedAt @map("actualizado_en") @db.Timestamptz
+  id              String         @id @default(uuid(7)) @db.Uuid
+  chatId          BigInt         @map("chat_id")
+  estado          EstadoBorrador @default(PENDIENTE)
+  datos           Json
+  /// Sube en 1 con cada escritura de `datos`.
+  version         Int            @default(1)
+  /// Última versión cuyo resumen Telegram confirmó haber recibido. Null = nunca se mostró.
+  versionMostrada Int?           @map("version_mostrada")
+  creadoEn        DateTime       @default(now()) @map("creado_en") @db.Timestamptz
+  actualizadoEn   DateTime       @updatedAt @map("actualizado_en") @db.Timestamptz
 
+  @@unique([chatId], where: raw("estado = 'PENDIENTE'"), map: "borradores_chat_id_pendiente_key")
   @@index([chatId, estado])
   @@map("borradores")
 }

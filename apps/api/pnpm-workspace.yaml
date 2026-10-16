@@ -1,3 +1,5 @@
 allowBuilds:
   '@prisma/engines': true
   prisma: true
+  # No hace falta compilar: el binario precompilado llega en @msgpackr-extract/msgpackr-extract-<plataforma>.
+  msgpackr-extract: false

@@ -194,6 +194,39 @@ También: crear clientes sin facturar, notas crédito y reportes ("¿cuánto ven
   mensaje de ayuda cambia según el caso (pedir datos u ofrecer "sí"). La emisión real llega en la
   fase 6. 11 tests nuevos (59/59 ✅).
 
+### Flujo de trabajo con ramas (después de la fase 3)
+- Se adopta **GitHub Flow**: `main` siempre estable y protegida en GitHub (exige Pull Request y CI en
+  verde, también para administradores; sin *force push*). Cada paso va en su rama (`feat/`, `fix/`,
+  `docs/`, `chore/`) y entra a `main` por PR con *squash*.
+- **CI** con GitHub Actions (`.github/workflows/ci.yml`): instalación, Oxlint, Prettier, `tsc` y tests
+  en cada PR. Primer PR: #1.
+- **Tags** por fase como puntos seguros para volver: `v0.1.0`, `v0.2.0`, `v0.3.0`.
+
+### Fase 4 — Factura por voz
+- **4.1** Servicio de transcripción en Docker: `onerahmet/openai-whisper-asr-webservice:v1.10.0`
+  (faster-whisper en CPU, modelo `small`, FFmpeg incluido, puerto `127.0.0.1:9000`, modelo guardado en
+  el volumen `whisper_cache`). Se eligió Docker para no instalar nada en Windows. La imagen ocupa
+  ~8,2 GB en disco (~2,6 GB de descarga). Prueba con una nota de voz sintética de ~10 s: **~5 s** de
+  transcripción, texto correcto salvo "la canegra" (laca negra) y la cédula escrita como
+  "1-0-2-0-3-0-4-0-5-0" → se normalizará en código.
+- **4.2** El bot recibe notas de voz: las descarga de Telegram **en memoria** (no se guardan en disco,
+  pueden tener datos de clientes), las envía a Whisper con `TranscriptorService`
+  (`src/voz/`, independiente del canal; `WHISPER_URL` con valor por defecto) y responde
+  "🎤 Entendí: …". Límite de **2 minutos** por nota para no bloquear la CPU. La URL de descarga lleva
+  el token del bot, por eso nunca se registra en los logs. Sin dependencias nuevas (`fetch`,
+  `FormData` y `Blob` vienen con Node 24).
+- **4.2b** Precisión de la transcripción. Problema real: "NIT 900111222" se transcribió "knit
+  90011122". Se midieron configuraciones con 6 audios de prueba (2 voces sintéticas, 3 frases con NIT
+  o cédula): con `small`, solo 1 de 6 identificaciones salió exacta; el modelo **pierde dígitos
+  repetidos** (111 → 11, 999 → 99). Se agregó un **contexto del negocio** (`initial_prompt`) y el
+  **filtro de voz** (`vad_filter`): mejora las palabras ("laca negra", "El Tornillo", "80 mil") pero
+  **no** los números (siguió 1/6). Lección: en una primera medición el contexto incluía el mismo NIT
+  de la prueba y daba 3/6; sin ese dato de prueba el resultado real era 1/6.
+- **4.2c** Modelo **`large-v3-turbo`** (~1,6 GB): con los mismos 6 audios, **4/6** identificaciones
+  exactas (vs 1/6) y "NIT" reconocido 6/6, a cambio de ~12 s por nota (vs ~3 s). Se adopta como modelo
+  por defecto. Sigue fallando con secuencias como 800999000, por eso el borrador marcará para revisión
+  el NIT o la cédula que vengan de una nota de voz (paso 4.4).
+
 ## 5. Cómo ejecutar
 
 Requisitos: [fnm](https://github.com/Schniz/fnm) (Node 24 según `.nvmrc`), [pnpm](https://pnpm.io) y
