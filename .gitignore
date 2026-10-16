@@ -34,10 +34,12 @@ Thumbs.db
 !.vscode/extensions.json
 
 # Instrucciones locales para Claude Code (personales, no se publican)
-CLAUDE.md
+CLAUDE.local.md
 
 # Grafo de conocimiento generado por graphify (local)
 graphify-out/
 
-# Subagentes locales de Claude Code
-.claude/agents/
+# Subagentes de Claude Code: solo se versionan estos dos; cualquier otro queda local
+.claude/agents/*
+!.claude/agents/control-calidad.md
+!.claude/agents/seguridad.md
