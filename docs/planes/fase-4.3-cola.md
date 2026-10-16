@@ -490,6 +490,14 @@ en RAM.
 8. Healthcheck de whisper; prueba manual en Telegram; mediciones de memoria (§8).
 9. Lint, Prettier, tsc y tests; subagentes `control-calidad` y `seguridad`; bitácora y README.
 
+## 17. Pendientes detectados durante la implementación
+
+- **Fase 3.5: validar con Zod el JSON de `datos` leído de la BD.** `ConversacionService` lo
+  convierte con `as unknown as BorradorFactura` (función `datosDe`), sin validarlo, y CLAUDE.md
+  exige validar con Zod el JSON que viene de la base. Ya pasaba antes de la 4.3. Propuesta:
+  un esquema Zod de `BorradorFactura` (reusando lo que se pueda de `respuestaIaSchema`) y,
+  si la fila no lo cumple, registrar el problema y avisar al usuario en vez de seguir.
+
 ## Para estudiar
 
 - BullMQ: "Going to production", "Stalled jobs", "Retrying failing jobs".

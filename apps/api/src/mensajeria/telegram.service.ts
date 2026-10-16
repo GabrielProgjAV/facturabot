@@ -8,7 +8,10 @@ import { ConfigService } from '@nestjs/config';
 import { Bot } from 'grammy';
 import type { Message } from 'grammy/types';
 import type { Env } from '../config/env.schema.js';
-import { ConversacionService } from '../facturacion/conversacion.service.js';
+import {
+  ConversacionService,
+  esAprobacion,
+} from '../facturacion/conversacion.service.js';
 import { TranscriptorService } from '../voz/transcriptor.service.js';
 import { type MensajeEntrante, responderEco } from './mensaje.js';
 
@@ -52,9 +55,24 @@ export class TelegramService
     this.bot.on('message:text', async (ctx) => {
       await ctx.replyWithChatAction('typing');
       try {
-        await ctx.reply(
-          await this.conversacion.responder(ctx.chat.id, ctx.message.text),
+        // Provisional hasta que la cola procese los mensajes (paso 6 del plan de la 4.3).
+        const texto = ctx.message.text;
+        const versionVista = esAprobacion(texto)
+          ? await this.conversacion.versionMostrada(ctx.chat.id)
+          : null;
+        const respuesta = await this.conversacion.responder(
+          ctx.chat.id,
+          texto,
+          versionVista,
         );
+        await ctx.reply(respuesta.texto);
+        // Solo después de que Telegram confirmó el envío.
+        if (respuesta.mostrar) {
+          await this.conversacion.marcarMostrada(
+            respuesta.mostrar.borradorId,
+            respuesta.mostrar.version,
+          );
+        }
       } catch (err) {
         this.logger.error(
           `Error interpretando texto: ${(err as Error).message}`,
