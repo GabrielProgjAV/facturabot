@@ -497,6 +497,15 @@ en RAM.
   exige validar con Zod el JSON que viene de la base. Ya pasaba antes de la 4.3. Propuesta:
   un esquema Zod de `BorradorFactura` (reusando lo que se pueda de `respuestaIaSchema`) y,
   si la fila no lo cumple, registrar el problema y avisar al usuario en vez de seguir.
+- **Revisar antes de la fase 5 (Alegra): deduplicación tras completar.** El jobId
+  `tg-<update_id>` solo deduplica mientras el trabajo sigue en la cola: con
+  `removeOnComplete: true`, una entrega repetida de Telegram que llegue después de procesar el
+  mensaje se procesa otra vez. Hoy el hueco es < 1 s (grammY confirma el `update_id` en cuanto el
+  handler termina de encolar). Opción futura: `deduplication: { id, ttl }` de BullMQ, que recuerda
+  solo el id durante el ttl, sin guardar el texto.
+- **Obligatorio antes de la fase 10 (WhatsApp) o de tener más de un comercio: límite de
+  frecuencia por chat** (mensajes por minuto). No está implementado: hoy un chat autorizado puede
+  llenar la cola, y con concurrencia 1 global haría esperar a los demás.
 
 ## Para estudiar
 
