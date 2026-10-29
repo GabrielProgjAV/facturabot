@@ -506,6 +506,18 @@ en RAM.
 - **Obligatorio antes de la fase 10 (WhatsApp) o de tener más de un comercio: límite de
   frecuencia por chat** (mensajes por minuto). No está implementado: hoy un chat autorizado puede
   llenar la cola, y con concurrencia 1 global haría esperar a los demás.
+- **Pendiente de aprobar: criterio de memoria ajustado (§8).** La línea base del 2026-10-28
+  (2 min en reposo, qwen2.5:7b y Whisper cargados, tras cerrar programas) ya supera el umbral de
+  `Pages Input/sec`: mediana 61,5 y una racha de 14 s sobre 100/s. Los demás criterios se
+  cumplieron: `Paging File % Usage` bajó 0,46 puntos, `GPU Adapter Memory Shared Usage` estable en
+  ~2,9 GB, `pswpin`/`pswpout` en 0, VRAM 3,29 GB y RAM disponible ~4,8 GB. Propuesta:
+  - Mediana de `Pages Input/sec` durante la prueba ≤ 1,5 × la mediana de la línea base.
+  - Rachas sobre 100/s ≤ 20 s.
+  - Los otros criterios de §8 sin cambios.
+
+  Se aprueba después de repetir la línea base en la siguiente sesión. En esta medición el primer
+  intento de cargar qwen falló con un error de CUDA ("shared object initialization failed") y el
+  segundo cargó bien: si se repite, anotarlo.
 
 ## Para estudiar
 
