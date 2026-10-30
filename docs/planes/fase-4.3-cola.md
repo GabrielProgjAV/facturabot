@@ -488,7 +488,8 @@ en RAM.
 7. Prueba de integración del índice; en `ci.yml`, el servicio PostgreSQL, `prisma migrate deploy`
    y luego `pnpm test:int` (decisión 11).
 8. Healthcheck de whisper; prueba manual en Telegram; mediciones de memoria (§8).
-9. Lint, Prettier, tsc y tests; subagentes `control-calidad` y `seguridad`; bitácora y README.
+9. Resolver §18.1 (hallazgos de la auditoría para cerrar la 4.3), con su aprobación; luego lint,
+   Prettier, tsc y tests; subagentes `control-calidad` y `seguridad`; bitácora y README.
 
 **Avance (2026-10-30):** pasos 1 a 7 hechos. Del 8: healthcheck de whisper hecho, y guion de
 prueba manual completo (puntos 0 a 8) con el resultado esperado en todos, incluido el "sí" enviado
@@ -555,6 +556,87 @@ criterio de memoria y el `.wslconfig` (§17). Las mediciones están fuera del re
   el dígito) y validarse con el módulo 11 antes de aceptarlo; si no cuadra, preguntar al usuario.
 - **Título del mensaje de aprobación.** Después de aprobar, el resumen sigue titulado
   "🧾 Borrador de factura". Debe cambiar (p. ej. "🧾 Factura aprobada") para no confundir.
+
+## 18. Auditoría independiente de la 4.3 (2026-10-30, solo lectura)
+
+Todos los datos de ejemplo de esta sección son ficticios. **Estado: propuestas pendientes de
+aprobación; no hay código escrito.**
+
+### 18.1 Para cerrar la 4.3 (dentro del paso 9, antes de los subagentes)
+
+1. **Orden de apagado.** Confirmado en la doc de NestJS (Lifecycle events): al recibir la señal se
+   ejecutan todos los `onModuleDestroy()`, después todos los `beforeApplicationShutdown()`, se
+   cierran las conexiones (`app.close()`) y al final los `onApplicationShutdown()`. Cada fase espera
+   a que terminen todas las promesas de la anterior. Hoy `PrismaService.$disconnect()` está en
+   `onModuleDestroy`, así que la base se desconecta **antes** de que el worker termine su trabajo.
+   Propuesta, usando las fases como barreras:
+   - `TelegramService.onModuleDestroy`: `bot.stop()` (deja de recibir mensajes).
+   - `ColaMensajesService.beforeApplicationShutdown`: cerrar el worker (termina el trabajo en
+     curso, que aún puede usar la base y `bot.api`), la cola y las conexiones de Redis.
+   - `PrismaService.onApplicationShutdown`: `$disconnect()`.
+
+   Así el orden queda garantizado por Nest y no depende del orden de los providers dentro de una
+   misma fase, que la doc no especifica. Nota de la doc: en Windows funciona `SIGINT` (Ctrl+C) y
+   `SIGTERM` nunca. Test: un spec por servicio que compruebe en qué hook se cierra cada cosa.
+2. **Test faltante.** Ningún test aísla `versionMostrada !== version`: el de "guardado sin envío"
+   usa `versionVista 1`, que también difiere. Propuesta:
+   - Unitario: `version 2`, `versionMostrada 1`, `versionVista 2` → no aprueba y reenvía.
+   - `conversacion.int-spec.ts` contra PostgreSQL real, con el intérprete simulado y chats
+     ficticios: aprueba con `v == mostrada == vista`; no aprueba con `v2/m1/vista2` (la fila sigue
+     PENDIENTE); `marcarMostrada` con una versión vieja no cambia nada; si la versión cambia entre
+     la lectura y el `updateMany`, `count` es 0 y no aprueba.
+3. **`telegram.service.ts`, error al iniciar el bot:** usar `describirError(err)` en lugar de
+   `err.message`.
+4. **Tamaño de las notas de voz.** Hoy solo se valida la duración, que declara el cliente. Según la
+   Bot API, `Voice.file_size` es opcional y los bots pueden descargar hasta 20 MB. Propuesta:
+   - Primero medir: registrar en el log, al recibir la nota, solo `duration` y `file_size`
+     (no son datos personales) y enviar una nota de ~2 min. No hay registro del tamaño de la nota
+     de 2 min del 2026-10-30.
+   - Fijar el límite con margen sobre lo medido (el valor de ~1 MB se confirma o se ajusta con
+     ese dato) y rechazar antes de encolar si `file_size` lo supera.
+   - Si `file_size` no viene, comprobar el tamaño real después de descargar y antes de Whisper.
+
+### 18.2 Para el plan de la 4.4
+
+5. **Hallazgo principal: la versión vista se lee cuando el "sí" llega al bot, no cuando el usuario
+   lo escribe.** Con mala señal, un "sí" escrito mirando la v1 puede llegar después de que se
+   mostró la v2 y aprobarla. Propuesta: aprobar con un **botón en línea** en cada resumen.
+   - `callback_data` = `a:<borradorId>:<version>`. Con un UUID de 36 caracteres y una versión de
+     hasta 5 dígitos son ~44 bytes; la Bot API permite de 1 a 64 bytes.
+   - El botón lleva la versión exacta de ese mensaje: aprueba solo si
+     `version == versionMostrada == versión del botón`, con el mismo `updateMany` atómico, y solo
+     si el chat está autorizado y el borrador es de ese chat.
+   - Siempre se llama a `answerCallbackQuery` (la Bot API lo exige para quitar la barra de
+     progreso del cliente). Tras aprobar o si el resumen ya no está vigente, se quita el botón
+     del mensaje viejo.
+   - El "sí" de texto o de voz ya no aprueba: responde con el resumen vigente y el botón
+     ("Toca ✅ Aprobar para confirmar"). Esto también resuelve que el trabajo de voz no lleve
+     `versionVista`. La decisión de mantener o no el "sí" de texto es de Gabriel.
+6. **El aviso "reenvíalo" tras un reinicio puede ser falso:** la corrección o la aprobación pudieron
+   guardarse antes del corte. Propuesta: `avisarTrabajoFallido` consulta el estado real del chat:
+   si el último borrador quedó aprobado después de que se encoló el trabajo, "Tu factura quedó
+   aprobada"; si hay un PENDIENTE, reenviar su resumen vigente (con el botón); si no hay nada,
+   el aviso actual.
+7. **Precios abreviados por voz.** En un dictado real apareció un precio dicho en miles sin la
+   palabra "mil" junto a otro completo. Ejemplo ficticio: "pintura azul 192, cinta 5.000", donde 192
+   quiere decir $192.000. El intérprete debe entenderlo y, si hay duda, **preguntar**. Se agrega al
+   set de evaluación con ejemplos ficticios antes de tocar sus instrucciones (regla de CLAUDE.md).
+   El código puede marcar como dudoso un valor de línea menor que 1.000 cuando otros están en miles.
+
+### 18.3 Para la fase 3.5
+
+8. `cancelar()` y `corregir()` con `updateMany` condicionado a `estado: 'PENDIENTE'` (y a `version`
+   en `corregir`), comprobando `count`.
+9. El worker también comprueba `TELEGRAM_CHATS_PERMITIDOS` antes de procesar; Redis con
+   `requirepass`.
+10. CI: `permissions: contents: read`, acciones fijadas por SHA, Dependabot y un paso de
+    `prisma migrate diff --exit-code` (el esquema y las migraciones no se desalinean).
+11. `test:int` con una base de pruebas aparte, no la de desarrollo.
+12. `app.listen` en `127.0.0.1`; el bot responde solo en chats privados y una sola vez a cada chat
+    desconocido.
+13. Subir zod a 4.6.6 en un PR aparte: el aviso GHSA-mrhx-c7xc-m3w5 (severidad alta) afecta a
+    `< 4.6.6` (agotar memoria validando arreglos grandes sin límite de longitud).
+14. Prueba de integración de BullMQ con un Redis real en el CI.
 
 ## Para estudiar
 
