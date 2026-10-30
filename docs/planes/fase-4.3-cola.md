@@ -490,6 +490,11 @@ en RAM.
 8. Healthcheck de whisper; prueba manual en Telegram; mediciones de memoria (§8).
 9. Lint, Prettier, tsc y tests; subagentes `control-calidad` y `seguridad`; bitácora y README.
 
+**Avance (2026-10-30):** pasos 1 a 7 hechos. Del 8: healthcheck de whisper hecho, y guion de
+prueba manual completo (puntos 0 a 8) con el resultado esperado en todos, incluido el "sí" enviado
+justo después de una corrección (no aprobó) y el orden de dos mensajes seguidos. Falta decidir el
+criterio de memoria y el `.wslconfig` (§17). Las mediciones están fuera del repo, con su resumen.
+
 ## 17. Pendientes detectados durante la implementación
 
 - **Fase 3.5: validar con Zod el JSON de `datos` leído de la BD.** `ConversacionService` lo
@@ -518,6 +523,38 @@ en RAM.
   Se aprueba después de repetir la línea base en la siguiente sesión. En esta medición el primer
   intento de cargar qwen falló con un error de CUDA ("shared object initialization failed") y el
   segundo cargó bien: si se repite, anotarlo.
+
+  **Datos del 2026-10-29 y 2026-10-30:** la mediana de `Pages Input/sec` en reposo varió entre días
+  (61,5 → 23,9 → 114,6), y el 30 hubo una racha de 38 s sobre 100/s **sin ningún mensaje**, así que
+  un umbral fijo de racha no sirve. En la prueba del 30: mediana 9,4 (≤ 1,5 × base), racha más larga
+  26 s (menor que la de la base), `Paging File % Usage` +1,6 puntos de inicio a fin (pico +4,6),
+  `GPU Shared Usage` hasta +144 MB sobre el inicio, `pswpin`/`pswpout` en 0 y VRAM máxima 3,44 GB.
+  **Aprobado por Gabriel el 2026-10-30:** la base es la del mismo día, tomada justo antes de la
+  prueba; mediana de `Pages Input/sec` ≤ 1,5 × la de la base; rachas sobre 100/s no más largas que
+  la racha más larga de la base; `GPU Shared Usage` con tolerancia de ±100 MB; el resto de §8 sin
+  cambios. **A vigilar:** el 30, `GPU Shared Usage` subió +144 MB, por encima de la tolerancia; se
+  revisa en la próxima medición sin cambiar la tolerancia.
+- **`.wslconfig` (opción C de §8), aplicado el 2026-10-30:** `memory=6GB` y
+  `autoMemoryReclaim=dropCache` (en `[experimental]`, según la doc de Microsoft), en
+  `%UserProfile%\.wslconfig`, fuera del repo. Docker lo respeta: `docker info` pasó de 11,6 a
+  5,8 GiB. Con una nota de voz de ~2 min: transcribir 36,8 s, pico de Whisper 2,92 GiB, memoria
+  usada de la VM máx 3,6 de 5,9 GB, disponible mín 2,3 GB, `pswpin` 0. `pswpout` subió de 0 a 53
+  páginas (~0,2 MB) al arrancar y en reposo, no durante la transcripción: se vigila. Antes, con una
+  nota de ~10 s y sin límite, el pico de Whisper fue 3,0 GiB.
+- **Intérprete: "cantidad × precio unitario" (set de evaluación).** Ejemplo ficticio: "2 galones de
+  esmalte a $50.000 cada uno, total $100.000". La IA puso el precio unitario (50.000) como valor de
+  la línea; el código lo detectó con el aviso de que los productos no suman. Hay que agregar el caso
+  al set de evaluación antes de tocar las instrucciones del intérprete (regla de CLAUDE.md). Una
+  lista de 9 productos con el total de cada línea se extrajo bien.
+- **Latencia de Ollama.** Trabajos de texto entre 6,5 y 15 s; la lista de 9 productos tardó 44,8 s,
+  y un mensaje con qwen descargado, 27,3 s (unos 10 s de recarga). El timeout es de 120 s: una lista
+  más larga podría acercarse. Revisar antes de la fase 5 (medir con más ítems; opciones: mantener
+  el modelo cargado más tiempo, mensaje de "sigo procesando").
+- **4.4 / fase 3.5: NIT dictado por voz con dígito de verificación.** Whisper transcribe el formato
+  "número-dígito" (ficticio: `900000001-2`). Ese formato debe normalizarse (quitar puntos, separar
+  el dígito) y validarse con el módulo 11 antes de aceptarlo; si no cuadra, preguntar al usuario.
+- **Título del mensaje de aprobación.** Después de aprobar, el resumen sigue titulado
+  "🧾 Borrador de factura". Debe cambiar (p. ej. "🧾 Factura aprobada") para no confundir.
 
 ## Para estudiar
 
