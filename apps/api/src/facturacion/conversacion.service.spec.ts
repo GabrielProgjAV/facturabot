@@ -225,6 +225,19 @@ describe('ConversacionService', () => {
       expect(respuesta.mostrar).toEqual({ borradorId: 'b1', version: 2 });
     });
 
+    it('solo versionMostrada difiere (version 2, versionMostrada 1, versionVista 2): no aprueba', async () => {
+      // Aísla la condición versionMostrada === version: versionVista coincide con version.
+      const { servicio, prisma } = crear(
+        fila({ version: 2, versionMostrada: 1 }),
+      );
+
+      const respuesta = await servicio.responder(42, 'sí', 2);
+
+      expect(prisma.borrador.updateMany).not.toHaveBeenCalled();
+      expect(respuesta.texto).toContain('otra vez');
+      expect(respuesta.mostrar).toEqual({ borradorId: 'b1', version: 2 });
+    });
+
     it('"sí" escrito antes de ver la corrección (versionVista 1, version 2 mostrada): no aprueba', async () => {
       const { servicio, prisma } = crear(
         fila({ version: 2, versionMostrada: 2 }),
