@@ -1,4 +1,8 @@
-import { Injectable, Logger, type OnApplicationShutdown } from '@nestjs/common';
+import {
+  type BeforeApplicationShutdown,
+  Injectable,
+  Logger,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Queue, Worker } from 'bullmq';
 import { Redis } from 'ioredis';
@@ -31,7 +35,7 @@ export type AvisarFallo = (
  * fase 12 (multiempresa).
  */
 @Injectable()
-export class ColaMensajesService implements OnApplicationShutdown {
+export class ColaMensajesService implements BeforeApplicationShutdown {
   private readonly logger = new Logger(ColaMensajesService.name);
   private readonly redisUrl: string;
   private readonly conexionCola: Redis;
@@ -102,8 +106,12 @@ export class ColaMensajesService implements OnApplicationShutdown {
     );
   }
 
-  /** Cierre ordenado: el worker termina el trabajo en curso antes de cerrar la cola. */
-  async onApplicationShutdown(): Promise<void> {
+  /**
+   * Cierre ordenado: el worker termina el trabajo en curso antes de cerrar la cola.
+   * Fase intermedia del apagado: después de bot.stop() (onModuleDestroy) y antes del
+   * $disconnect de Prisma (onApplicationShutdown), porque el trabajo en curso usa la base.
+   */
+  async beforeApplicationShutdown(): Promise<void> {
     await this.worker?.close();
     await this.cola.close();
     // BullMQ no cierra las conexiones que recibe ya creadas.

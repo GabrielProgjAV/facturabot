@@ -217,6 +217,27 @@ describe('TelegramService: voz', () => {
     expect(cola.encolar).not.toHaveBeenCalled();
     expect(responder).toHaveBeenCalledWith(MENSAJES_RECEPCION.vozLarga);
   });
+
+  it('registra la duración y el tamaño de la nota, sin el chatId', async () => {
+    const { servicio, responder } = crear();
+
+    await servicio.recibirVoz(
+      CHAT,
+      UPDATE,
+      { duration: 118, file_id: 'archivo-1', file_size: 412000 },
+      responder,
+    );
+    await servicio.recibirVoz(
+      CHAT,
+      UPDATE + 1,
+      { duration: 10, file_id: 'archivo-2' },
+      responder,
+    );
+
+    expect(logs).toContain(`tg-${UPDATE} voz: 118 s, 412000 bytes`);
+    expect(logs).toContain(`tg-${UPDATE + 1} voz: 10 s, sin bytes`);
+    for (const linea of logs) expect(linea).not.toContain(String(CHAT));
+  });
 });
 
 describe('TelegramService: descargarVoz', () => {

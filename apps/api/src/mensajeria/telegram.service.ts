@@ -3,7 +3,7 @@ import {
   Injectable,
   Logger,
   OnApplicationBootstrap,
-  OnApplicationShutdown,
+  OnModuleDestroy,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Bot } from 'grammy';
@@ -57,7 +57,7 @@ type Responder = (texto: string) => Promise<unknown>;
  */
 @Injectable()
 export class TelegramService
-  implements OnApplicationBootstrap, OnApplicationShutdown
+  implements OnApplicationBootstrap, OnModuleDestroy
 {
   private readonly logger = new Logger(TelegramService.name);
   private readonly bot: Bot;
@@ -139,9 +139,13 @@ export class TelegramService
   async recibirVoz(
     chatId: number,
     updateId: number,
-    voz: { duration: number; file_id: string },
+    voz: { duration: number; file_id: string; file_size?: number },
     responder: Responder,
   ): Promise<void> {
+    // Duración y tamaño no son datos personales: sirven para fijar el límite de tamaño (§18.1).
+    this.logger.log(
+      `tg-${updateId} voz: ${voz.duration} s, ${voz.file_size ?? 'sin'} bytes`,
+    );
     if (voz.duration > DURACION_MAXIMA_VOZ_SEGUNDOS) {
       await this.avisar(responder, MENSAJES_RECEPCION.vozLarga);
       return;
@@ -202,11 +206,15 @@ export class TelegramService
           this.logger.log(`Bot @${info.username} escuchando (long polling)`),
       })
       .catch((err: Error) =>
-        this.logger.error(`No se pudo iniciar el bot: ${err.message}`),
+        this.logger.error(`No se pudo iniciar el bot: ${describirError(err)}`),
       );
   }
 
-  async onApplicationShutdown(): Promise<void> {
+  /**
+   * Primera fase del apagado: deja de recibir mensajes. El worker sigue terminando el trabajo
+   * en curso (bot.api funciona sin el long polling) y se cierra en beforeApplicationShutdown.
+   */
+  async onModuleDestroy(): Promise<void> {
     await this.bot.stop();
   }
 

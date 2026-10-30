@@ -267,7 +267,7 @@ describe('ColaMensajesService', () => {
     const servicio = crear();
     servicio.iniciar(vi.fn(), vi.fn());
 
-    await servicio.onApplicationShutdown();
+    await servicio.beforeApplicationShutdown();
 
     expect(h.registro.orden).toEqual([
       'worker.close',
@@ -280,7 +280,7 @@ describe('ColaMensajesService', () => {
   it('apagar sin haber iniciado el worker cierra la cola', async () => {
     const servicio = crear();
 
-    await servicio.onApplicationShutdown();
+    await servicio.beforeApplicationShutdown();
 
     expect(h.registro.orden).toEqual(['cola.close', 'disconnect']);
   });
