@@ -642,6 +642,13 @@ Todos los datos de ejemplo de esta sección son ficticios. **Estado: §18.1 apro
     y `cola-fallidos.int-spec.ts` prueba la retención de fallidos (§18.4); falta probar el flujo
     completo de la cola.
 
+15. Subir `@nestjs/*` a 12.3.2, en un PR aparte (de una auditoría del historial).
+16. Quitar `@nestjs/mau` y el script `deploy` de `apps/api/package.json`.
+17. Ampliar `.gitignore`: audios, PDF, `docker-compose.override.yml` y `settings.local.json`.
+18. CI: `timeout-minutes` y `concurrency` (cancela ejecuciones viejas de la misma rama).
+19. `env.schema.ts`: los IDs de `TELEGRAM_CHATS_PERMITIDOS` como enteros seguros y distintos de 0, y
+    validar las URLs de Ollama y Whisper.
+
 ### 18.4 Revisión de `control-calidad` y `seguridad` (2026-10-30)
 
 `control-calidad` respondió "ok". **Resuelto antes de cerrar la 4.3** (aprobado por Gabriel):
