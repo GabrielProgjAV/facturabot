@@ -27,7 +27,9 @@ import {
   LIMITE_TEXTO,
   MENSAJES_FALLA,
   procesarMensaje,
+  TAMANO_MAXIMO_VOZ_BYTES,
   type TrabajoMensaje,
+  VozDemasiadoPesadaError,
 } from './procesador-mensajes.js';
 
 /** Transcribir ocupa la CPU: una nota más larga bloquearía el equipo. */
@@ -135,7 +137,7 @@ export class TelegramService
     );
   }
 
-  /** Valida la duración de una nota de voz y la encola (solo el file_id, nunca el audio). */
+  /** Valida la duración y el tamaño de una nota de voz y la encola (solo el file_id, nunca el audio). */
   async recibirVoz(
     chatId: number,
     updateId: number,
@@ -148,6 +150,15 @@ export class TelegramService
     );
     if (voz.duration > DURACION_MAXIMA_VOZ_SEGUNDOS) {
       await this.avisar(responder, MENSAJES_RECEPCION.vozLarga);
+      return;
+    }
+    // La duración la declara el cliente; el tamaño acota lo que se descarga y transcribe.
+    // Si Telegram no envía file_size, se comprueba al descargar (descargarVoz).
+    if (
+      voz.file_size !== undefined &&
+      voz.file_size > TAMANO_MAXIMO_VOZ_BYTES
+    ) {
+      await this.avisar(responder, MENSAJES_FALLA.vozPesada);
       return;
     }
     await this.avisar(responder, MENSAJES_RECEPCION.escuchando);
@@ -172,6 +183,12 @@ export class TelegramService
         fileId,
         senal as unknown as SenalGrammy,
       );
+      if (
+        archivo.file_size !== undefined &&
+        archivo.file_size > TAMANO_MAXIMO_VOZ_BYTES
+      ) {
+        throw new VozDemasiadoPesadaError();
+      }
       // La URL lleva el token: nunca se registra en los logs.
       const descarga = await fetch(
         `https://api.telegram.org/file/bot${this.token}/${archivo.file_path}`,
@@ -180,7 +197,12 @@ export class TelegramService
       if (!descarga.ok) {
         throw new Error(`Telegram respondió ${descarga.status}`);
       }
-      return new Uint8Array(await descarga.arrayBuffer());
+      const audio = new Uint8Array(await descarga.arrayBuffer());
+      // Por si Telegram no informó el tamaño: nunca se transcribe una nota más pesada.
+      if (audio.byteLength > TAMANO_MAXIMO_VOZ_BYTES) {
+        throw new VozDemasiadoPesadaError();
+      }
+      return audio;
     } catch (err) {
       // grammY envuelve la cancelación en su propio error: se normaliza para no reintentarla.
       if (senal.aborted) {

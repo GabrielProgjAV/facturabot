@@ -7,7 +7,11 @@ import {
   type ColaMensajesService,
   EncoladoSinConfirmarError,
 } from './cola-mensajes.service.js';
-import { MENSAJES_FALLA } from './procesador-mensajes.js';
+import {
+  MENSAJES_FALLA,
+  TAMANO_MAXIMO_VOZ_BYTES,
+  VozDemasiadoPesadaError,
+} from './procesador-mensajes.js';
 import { MENSAJES_RECEPCION, TelegramService } from './telegram.service.js';
 
 const CHAT = 4242; // chat ficticio
@@ -238,6 +242,29 @@ describe('TelegramService: voz', () => {
     expect(logs).toContain(`tg-${UPDATE + 1} voz: 10 s, sin bytes`);
     for (const linea of logs) expect(linea).not.toContain(String(CHAT));
   });
+
+  it.each([
+    ['justo en el límite (1 MB)', TAMANO_MAXIMO_VOZ_BYTES, true],
+    ['sin file_size (se comprueba al descargar)', undefined, true],
+    ['un byte por encima del límite', TAMANO_MAXIMO_VOZ_BYTES + 1, false],
+  ])('nota %s: se encola = %s', async (_caso, fileSize, encola) => {
+    const { servicio, cola, responder } = crear();
+
+    await servicio.recibirVoz(
+      CHAT,
+      UPDATE,
+      { duration: 60, file_id: 'archivo-1', file_size: fileSize },
+      responder,
+    );
+
+    expect(cola.encolar).toHaveBeenCalledTimes(encola ? 1 : 0);
+    if (!encola) {
+      expect(responder).toHaveBeenCalledWith(MENSAJES_FALLA.vozPesada);
+      expect(MENSAJES_FALLA.vozPesada).toBe(
+        'La nota de voz es muy pesada. Envíala más corta o escríbela.',
+      );
+    }
+  });
 });
 
 describe('TelegramService: descargarVoz', () => {
@@ -284,5 +311,54 @@ describe('TelegramService: descargarVoz', () => {
     } finally {
       vi.unstubAllGlobals();
     }
+  });
+
+  describe('límite de tamaño', () => {
+    function conDescarga(fileSize: number | undefined, bytes: number) {
+      const { servicio } = crear();
+      const api = (
+        servicio as unknown as { bot: { api: { getFile: unknown } } }
+      ).bot.api;
+      api.getFile = vi.fn().mockResolvedValue({
+        file_path: 'voice/file_1.oga',
+        file_size: fileSize,
+      });
+      const fetchFalso = vi
+        .fn()
+        .mockResolvedValue(
+          new Response(new Uint8Array(bytes), { status: 200 }),
+        );
+      vi.stubGlobal('fetch', fetchFalso);
+      return { servicio, fetchFalso };
+    }
+    afterEach(() => vi.unstubAllGlobals());
+
+    it('si getFile informa más de 1 MB, no descarga', async () => {
+      const { servicio, fetchFalso } = conDescarga(
+        TAMANO_MAXIMO_VOZ_BYTES + 1,
+        10,
+      );
+
+      await expect(servicio.descargarVoz('archivo-1')).rejects.toBeInstanceOf(
+        VozDemasiadoPesadaError,
+      );
+      expect(fetchFalso).not.toHaveBeenCalled();
+    });
+
+    it('sin file_size y una descarga de más de 1 MB: la rechaza', async () => {
+      const { servicio } = conDescarga(undefined, TAMANO_MAXIMO_VOZ_BYTES + 1);
+
+      await expect(servicio.descargarVoz('archivo-1')).rejects.toBeInstanceOf(
+        VozDemasiadoPesadaError,
+      );
+    });
+
+    it('sin file_size y una descarga de exactamente 1 MB: la acepta', async () => {
+      const { servicio } = conDescarga(undefined, TAMANO_MAXIMO_VOZ_BYTES);
+
+      const audio = await servicio.descargarVoz('archivo-1');
+
+      expect(audio.byteLength).toBe(TAMANO_MAXIMO_VOZ_BYTES);
+    });
   });
 });

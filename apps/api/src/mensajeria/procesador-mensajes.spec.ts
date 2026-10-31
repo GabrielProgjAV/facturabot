@@ -4,6 +4,7 @@ import {
   ESPERA_REINTENTO_MS,
   MENSAJES_FALLA,
   procesarMensaje,
+  VozDemasiadoPesadaError,
 } from './procesador-mensajes.js';
 
 const CHAT = 4242; // chat ficticio
@@ -195,6 +196,17 @@ describe('procesarMensaje: voz', () => {
     expect(deps.descargarVoz).toHaveBeenCalledTimes(1);
     expect(deps.transcribir).not.toHaveBeenCalled();
     expect(deps.enviar).toHaveBeenCalledWith(CHAT, MENSAJES_FALLA.voz);
+  });
+
+  it('nota demasiado pesada: no reintenta, no transcribe y lo dice claro', async () => {
+    const { deps } = crearDeps();
+    deps.descargarVoz.mockRejectedValue(new VozDemasiadoPesadaError());
+
+    await procesarMensaje(voz, 'j2', deps);
+
+    expect(deps.descargarVoz).toHaveBeenCalledTimes(1);
+    expect(deps.transcribir).not.toHaveBeenCalled();
+    expect(deps.enviar).toHaveBeenCalledWith(CHAT, MENSAJES_FALLA.vozPesada);
   });
 });
 

@@ -5,6 +5,12 @@ import type { RespuestaConversacion } from '../facturacion/conversacion.service.
 /** Máximo de caracteres de un texto (docs/planes/fase-4.3-cola.md §5). */
 export const LIMITE_TEXTO = 1000;
 
+/**
+ * Tamaño máximo de una nota de voz. Medido el 2026-10-30: ~4 KB/s (Opus de Telegram), así que una
+ * nota de 120 s pesa ~0,5 MB; 1 MB deja ~2 veces de margen (§18.1).
+ */
+export const TAMANO_MAXIMO_VOZ_BYTES = 1_048_576;
+
 /** Pausa antes del único reintento interno. */
 export const ESPERA_REINTENTO_MS = 2000;
 
@@ -31,11 +37,20 @@ export type TrabajoMensaje = z.infer<typeof trabajoMensajeSchema>;
 
 export const MENSAJES_FALLA = {
   voz: 'No pude escuchar la nota de voz. Intenta en un rato o escríbela.',
+  vozPesada: 'La nota de voz es muy pesada. Envíala más corta o escríbela.',
   texto: 'No pude procesar el mensaje. Tu borrador anterior sigue igual.',
   reinicio: 'No alcancé a procesar tu último mensaje. Reenvíalo, por favor.',
   encoladoSinConfirmar:
     'No pude confirmar si recibí tu mensaje. Espera un momento: si en un minuto no te llega el resumen, reenvíalo.',
 } as const;
+
+/** La nota de voz supera TAMANO_MAXIMO_VOZ_BYTES. No se reintenta: volvería a pesar lo mismo. */
+export class VozDemasiadoPesadaError extends Error {
+  override readonly name = 'VozDemasiadoPesadaError';
+  constructor() {
+    super(`La nota de voz supera ${TAMANO_MAXIMO_VOZ_BYTES} bytes`);
+  }
+}
 
 /** Lo que el procesador necesita del exterior. TelegramService lo arma al arrancar. */
 export interface DependenciasProcesador {
@@ -96,7 +111,12 @@ export async function procesarMensaje(
     deps.logger.error(
       `Trabajo ${jobId} (${trabajo.tipo}) falló en ${ctx.etapa}: ${describirError(err)}`,
     );
-    respuesta = { texto: MENSAJES_FALLA[trabajo.tipo] };
+    respuesta = {
+      texto:
+        err instanceof VozDemasiadoPesadaError
+          ? MENSAJES_FALLA.vozPesada
+          : MENSAJES_FALLA[trabajo.tipo],
+    };
   }
 
   try {
@@ -133,10 +153,11 @@ async function procesarVoz(
 ): Promise<RespuestaConversacion> {
   const { deps } = ctx;
   ctx.etapa = 'descargar';
-  // Descargar es una lectura: se puede repetir sin efectos. El timeout no se reintenta.
+  // Descargar es una lectura: se puede repetir sin efectos. El timeout y el exceso de tamaño
+  // no se reintentan.
   const audio = await conReintento(
     () => deps.descargarVoz(fileId),
-    (err) => !esTimeout(err),
+    (err) => !esTimeout(err) && !(err instanceof VozDemasiadoPesadaError),
     ctx,
   );
   ctx.etapa = 'transcribir';
