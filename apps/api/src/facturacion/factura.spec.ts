@@ -10,7 +10,7 @@ import {
 } from './factura.js';
 
 const completo: BorradorFactura = {
-  cliente: { nombre: 'Central de Acrílicos', identificacion: '900123456' },
+  cliente: { nombre: 'Acrílicos Ejemplo SAS', identificacion: '900123456' }, // NIT ficticio
   items: [
     { descripcion: '1 galón laca negra', valor: 78000 },
     { descripcion: '1/2 laca azul', valor: 45000 },
@@ -104,7 +104,7 @@ describe('resumenBorrador', () => {
   it('muestra cliente, ítems y totales con IVA', () => {
     const resumen = resumenBorrador(completo);
 
-    expect(resumen).toContain('Central de Acrílicos');
+    expect(resumen).toContain('Acrílicos Ejemplo SAS');
     expect(resumen).toContain('78.000');
     expect(resumen).toContain('26.790'); // IVA de 141.000
     expect(resumen).toContain('167.790'); // total a pagar
