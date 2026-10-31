@@ -16,8 +16,18 @@ import {
 const NOMBRE_COLA = 'mensajes';
 /** Si Redis no acepta el trabajo en este tiempo, se le avisa al usuario en vez de esperar. */
 export const LIMITE_ENCOLAR_MS = 5000;
-/** Retención de los trabajos fallidos: el texto no se queda en Redis más de un día. */
-const RETENCION_FALLIDOS_S = 24 * 60 * 60;
+/**
+ * Opciones de cada trabajo. Sin reintentos de BullMQ: romperían el orden y duplicarían
+ * correcciones (§2). Ni los completados ni los fallidos se quedan en Redis: el texto del cliente
+ * se borra al terminar. Con `removeOnFail: { age }` el borrado era perezoso (BullMQ solo limpia
+ * por antigüedad cuando otro trabajo termina en ese conjunto) y un fallido podía quedarse días.
+ * El aviso al usuario no necesita el trabajo guardado: el evento 'failed' trae el job en memoria.
+ */
+export const OPCIONES_TRABAJO = {
+  attempts: 1,
+  removeOnComplete: true,
+  removeOnFail: true,
+} as const;
 
 export type ProcesarTrabajo = (datos: unknown, jobId: string) => Promise<void>;
 export type AvisarFallo = (
@@ -53,12 +63,7 @@ export class ColaMensajesService implements BeforeApplicationShutdown {
     );
     this.cola = new Queue(NOMBRE_COLA, {
       connection: this.conexionCola,
-      defaultJobOptions: {
-        // Sin reintentos de BullMQ: romperían el orden y duplicarían correcciones (§2).
-        attempts: 1,
-        removeOnComplete: true,
-        removeOnFail: { age: RETENCION_FALLIDOS_S },
-      },
+      defaultJobOptions: OPCIONES_TRABAJO,
     });
   }
 
@@ -112,11 +117,18 @@ export class ColaMensajesService implements BeforeApplicationShutdown {
    * $disconnect de Prisma (onApplicationShutdown), porque el trabajo en curso usa la base.
    */
   async beforeApplicationShutdown(): Promise<void> {
-    await this.worker?.close();
-    await this.cola.close();
-    // BullMQ no cierra las conexiones que recibe ya creadas.
-    this.conexionWorker?.disconnect();
-    this.conexionCola.disconnect();
+    // Si cerrar el worker o la cola falla, las conexiones se cierran igual.
+    try {
+      try {
+        await this.worker?.close();
+      } finally {
+        await this.cola.close();
+      }
+    } finally {
+      // BullMQ no cierra las conexiones que recibe ya creadas.
+      this.conexionWorker?.disconnect();
+      this.conexionCola.disconnect();
+    }
   }
 }
 

@@ -15,9 +15,18 @@ jobs:
     defaults:
       run:
         working-directory: apps/api
-    # PostgreSQL desechable para las pruebas de integración (pnpm test:int). Credenciales solo
-    # de CI: el contenedor vive lo que dura el job y no guarda datos reales.
+    # PostgreSQL y Redis desechables para las pruebas de integración (pnpm test:int). Credenciales
+    # solo de CI: los contenedores viven lo que dura el job y no guardan datos reales.
     services:
+      redis:
+        image: redis:8-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
       postgres:
         image: postgres:18-alpine
         env:
@@ -34,6 +43,7 @@ jobs:
     env:
       # La usan el CLI de Prisma y las pruebas de integración. Los tests unitarios no se conectan.
       DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
+      REDIS_URL: redis://localhost:6379
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6

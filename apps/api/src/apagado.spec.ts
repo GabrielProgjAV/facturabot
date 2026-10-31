@@ -10,6 +10,8 @@ import { PrismaService } from './prisma/prisma.service.js';
  * espiados en el prototipo.
  */
 describe('orden de apagado', () => {
+  afterEach(() => vi.restoreAllMocks());
+
   it('primero deja de recibir mensajes, luego cierra el worker y al final la base', async () => {
     const orden: string[] = [];
     vi.spyOn(TelegramService.prototype, 'onModuleDestroy').mockImplementation(
@@ -50,6 +52,5 @@ describe('orden de apagado', () => {
     await app.close();
 
     expect(orden).toEqual(['bot.stop', 'worker.close', 'prisma.$disconnect']);
-    vi.restoreAllMocks();
   });
 });

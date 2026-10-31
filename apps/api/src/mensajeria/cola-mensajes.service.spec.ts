@@ -31,6 +31,7 @@ const h = vi.hoisted(() => {
       procesar: (job: unknown) => Promise<void>;
       opciones: Record<string, unknown>;
       manejadores: Map<string, Manejador>;
+      close: ReturnType<typeof vi.fn>;
     }[],
   };
   class Redis extends Eventos {
@@ -93,7 +94,7 @@ const trabajo: TrabajoMensaje = {
   tipo: 'texto',
   chatId: 4242, // chat ficticio
   texto: 'factura a Ana',
-  versionVista: null,
+  vista: null,
 };
 
 function crear() {
@@ -120,7 +121,7 @@ describe('ColaMensajesService', () => {
     expect(cola.opciones.defaultJobOptions).toEqual({
       attempts: 1,
       removeOnComplete: true,
-      removeOnFail: { age: 86_400 },
+      removeOnFail: true,
     });
     expect(h.registro.conexiones[0]).toMatchObject({
       url: REDIS_URL,
@@ -271,6 +272,24 @@ describe('ColaMensajesService', () => {
 
     expect(h.registro.orden).toEqual([
       'worker.close',
+      'cola.close',
+      'disconnect',
+      'disconnect',
+    ]);
+  });
+
+  it('si el worker falla al cerrar, igual cierra la cola y las conexiones', async () => {
+    const servicio = crear();
+    servicio.iniciar(vi.fn(), vi.fn());
+    h.registro.workers[0].close.mockRejectedValueOnce(
+      new Error('cierre fallido'),
+    );
+
+    await expect(servicio.beforeApplicationShutdown()).rejects.toThrow(
+      'cierre fallido',
+    );
+
+    expect(h.registro.orden).toEqual([
       'cola.close',
       'disconnect',
       'disconnect',
