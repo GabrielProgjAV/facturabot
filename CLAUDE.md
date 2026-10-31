@@ -129,7 +129,7 @@ Ollama debe estar corriendo con el modelo oficial descargado.
   3.5 en §17 y §18.3 de ese plan.
 - PR de la fase 4: marcar como "(ficticio)" los NIT y cédulas de prueba de la bitácora de los README, sobre todo la cédula de prueba de la bitácora.
 - Auditoría externa independiente (`docs/prompts/auditoria-seguridad.md`): antes de integrar el PR de la fase 4 y antes de empezar la fase 6.
-- Fase 3.5 (tras `v0.4.0`, antes de Alegra): caso f, rechazar total = 0, dígito de verificación del NIT (módulo 11) y test e2e. PR aparte: `OLLAMA_MODELO_TEXTO` por defecto a `qwen2.5:7b`.
+- Fase 3.5 (tras `v0.4.0`, antes de Alegra): caso f, rechazar total = 0 y test e2e (el dígito de verificación del NIT pasó a la 4.4). PR aparte: `OLLAMA_MODELO_TEXTO` por defecto a `qwen2.5:7b`.
 - Después: 5 PDF → inventario · 6 Alegra · 7 clientes y notas crédito · 8 reportes · 9 fotos · 10 WhatsApp · 11 Siigo · 12 multiempresa.
 
 ## Preguntas abiertas
