@@ -67,6 +67,9 @@ function crear(pendiente: Fila | null) {
   return { servicio, prisma, interprete };
 }
 
+/** Lo que el usuario veía al escribir "sí": por defecto, el borrador b1. */
+const vista = (version: number, borradorId = 'b1') => ({ borradorId, version });
+
 const APROBACION = expect.objectContaining({
   data: { estado: 'APROBADO' },
 });
@@ -196,7 +199,7 @@ describe('ConversacionService', () => {
           fila({ version: 2, versionMostrada: 2 }),
         );
 
-        const respuesta = await servicio.responder(42, texto, 2);
+        const respuesta = await servicio.responder(42, texto, vista(2));
 
         expect(prisma.borrador.updateMany).toHaveBeenCalledWith({
           where: {
@@ -218,7 +221,7 @@ describe('ConversacionService', () => {
         fila({ version: 2, versionMostrada: 1 }),
       );
 
-      const respuesta = await servicio.responder(42, 'sí', 1);
+      const respuesta = await servicio.responder(42, 'sí', vista(1));
 
       expect(prisma.borrador.updateMany).not.toHaveBeenCalled();
       expect(respuesta.texto).toContain('otra vez');
@@ -231,11 +234,25 @@ describe('ConversacionService', () => {
         fila({ version: 2, versionMostrada: 1 }),
       );
 
-      const respuesta = await servicio.responder(42, 'sí', 2);
+      const respuesta = await servicio.responder(42, 'sí', vista(2));
 
       expect(prisma.borrador.updateMany).not.toHaveBeenCalled();
       expect(respuesta.texto).toContain('otra vez');
       expect(respuesta.mostrar).toEqual({ borradorId: 'b1', version: 2 });
+    });
+
+    it('misma versión pero otro borrador (vista de b1, pendiente b2): no aprueba', async () => {
+      // "cancelar" → factura nueva → "sí" en cola: el "sí" se escribió viendo b1 v1, y al
+      // procesarlo el PENDIENTE es b2, también en v1 y ya mostrado (§18).
+      const { servicio, prisma } = crear(
+        fila({ id: 'b2', version: 1, versionMostrada: 1 }),
+      );
+
+      const respuesta = await servicio.responder(42, 'sí', vista(1, 'b1'));
+
+      expect(prisma.borrador.updateMany).not.toHaveBeenCalled();
+      expect(respuesta.texto).toContain('otra vez');
+      expect(respuesta.mostrar).toEqual({ borradorId: 'b2', version: 1 });
     });
 
     it('"sí" escrito antes de ver la corrección (versionVista 1, version 2 mostrada): no aprueba', async () => {
@@ -243,7 +260,7 @@ describe('ConversacionService', () => {
         fila({ version: 2, versionMostrada: 2 }),
       );
 
-      const respuesta = await servicio.responder(42, 'sí', 1);
+      const respuesta = await servicio.responder(42, 'sí', vista(1));
 
       expect(prisma.borrador.updateMany).not.toHaveBeenCalled();
       expect(respuesta.texto).toContain('otra vez');
@@ -255,8 +272,8 @@ describe('ConversacionService', () => {
       const { servicio, prisma } = crear(
         fila({ version: 2, versionMostrada: 1 }),
       );
-      const versionVista = await servicio.versionMostrada(42);
-      expect(versionVista).toBe(1); // nunca `version`
+      const vistaCapturada = await servicio.vistaActual(42);
+      expect(vistaCapturada).toEqual(vista(1)); // nunca `version`
 
       // 2. Telegram confirma el envío de la corrección antes de procesar el "sí".
       prisma.borrador.findFirst.mockResolvedValue(
@@ -264,7 +281,7 @@ describe('ConversacionService', () => {
       );
 
       // 3. Se procesa el "sí": version 2 == versionMostrada 2, pero el usuario veía la 1.
-      const respuesta = await servicio.responder(42, 'sí', versionVista);
+      const respuesta = await servicio.responder(42, 'sí', vistaCapturada);
 
       expect(prisma.borrador.updateMany).not.toHaveBeenCalledWith(APROBACION);
       expect(respuesta.texto).toContain('otra vez');
@@ -273,10 +290,10 @@ describe('ConversacionService', () => {
     it('borrador que nunca se mostró (versionMostrada null): el primer "sí" reenvía el resumen', async () => {
       const { servicio, prisma } = crear(fila({ versionMostrada: null }));
 
-      const versionVista = await servicio.versionMostrada(42);
-      const respuesta = await servicio.responder(42, 'sí', versionVista);
+      const vistaCapturada = await servicio.vistaActual(42);
+      const respuesta = await servicio.responder(42, 'sí', vistaCapturada);
 
-      expect(versionVista).toBeNull();
+      expect(vistaCapturada).toBeNull();
       expect(prisma.borrador.updateMany).not.toHaveBeenCalled();
       expect(respuesta.mostrar).toEqual({ borradorId: 'b1', version: 1 });
     });
@@ -284,7 +301,7 @@ describe('ConversacionService', () => {
     it('"sí" sin borrador pendiente (versionVista null) solo avisa', async () => {
       const { servicio, prisma, interprete } = crear(null);
 
-      expect(await servicio.versionMostrada(42)).toBeNull();
+      expect(await servicio.vistaActual(42)).toBeNull();
       const respuesta = await servicio.responder(42, 'sí', null);
 
       expect(respuesta.texto).toContain('No hay');
@@ -299,7 +316,7 @@ describe('ConversacionService', () => {
         .mockResolvedValueOnce(fila())
         .mockResolvedValueOnce(fila({ version: 2, versionMostrada: 1 }));
 
-      const respuesta = await servicio.responder(42, 'sí', 1);
+      const respuesta = await servicio.responder(42, 'sí', vista(1));
 
       expect(respuesta.texto).not.toContain('aprobada');
       expect(respuesta.texto).toContain('otra vez');
@@ -313,7 +330,7 @@ describe('ConversacionService', () => {
       };
       const { servicio, prisma } = crear(fila({ datos: sinNit }));
 
-      const respuesta = await servicio.responder(42, 'sí', 1);
+      const respuesta = await servicio.responder(42, 'sí', vista(1));
 
       expect(respuesta.texto).toContain('NIT o cédula');
       expect(prisma.borrador.updateMany).not.toHaveBeenCalled();
@@ -322,7 +339,7 @@ describe('ConversacionService', () => {
     it('"sí, pero…" no aprueba: es una corrección', async () => {
       const { servicio, prisma, interprete } = crear(fila());
 
-      await servicio.responder(42, 'sí, pero el nit es 999', 1);
+      await servicio.responder(42, 'sí, pero el nit es 999', vista(1));
 
       expect(interprete.interpretar).toHaveBeenCalled();
       expect(prisma.borrador.updateMany).not.toHaveBeenCalledWith(APROBACION);

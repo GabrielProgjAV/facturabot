@@ -16,6 +16,11 @@ import { MENSAJES_RECEPCION, TelegramService } from './telegram.service.js';
 
 const CHAT = 4242; // chat ficticio
 const UPDATE = 9001;
+/** Borrador y versión mostrados (uuid ficticio). */
+const VISTA = {
+  borradorId: '01900000-0000-7000-8000-000000000001',
+  version: 1,
+};
 
 /** El cableado de grammY no se prueba: se llama directo a los métodos del handler. */
 function crear() {
@@ -26,7 +31,7 @@ function crear() {
   const config = {
     get: (clave: string) => valores[clave],
   } as unknown as ConfigService<Env, true>;
-  const conversacion = { versionMostrada: vi.fn().mockResolvedValue(1) };
+  const conversacion = { vistaActual: vi.fn().mockResolvedValue(VISTA) };
   const cola = { encolar: vi.fn().mockResolvedValue(undefined) };
   const servicio = new TelegramService(
     config,
@@ -62,11 +67,11 @@ describe('TelegramService: texto', () => {
         tipo: 'texto',
         chatId: CHAT,
         texto: 'factura a Ana',
-        versionVista: null,
+        vista: null,
       },
       `tg-${UPDATE}`,
     );
-    expect(conversacion.versionMostrada).not.toHaveBeenCalled();
+    expect(conversacion.vistaActual).not.toHaveBeenCalled();
   });
 
   it('el jobId nunca lleva el chatId', async () => {
@@ -96,18 +101,17 @@ describe('TelegramService: texto', () => {
     expect(cola.encolar).toHaveBeenCalled();
   });
 
-  it('"sí": captura versionVista de versionMostrada y no avisa "Procesando…"', async () => {
-    // Condición 1 de §15, mitad del handler: se lee versionMostrada (1), no version (2, una
-    // corrección guardada que el usuario aún no recibió). La otra mitad está en
-    // conversacion.service.spec.ts.
+  it('"sí": captura el borrador y la versión mostrados, y no avisa "Procesando…"', async () => {
+    // Condición 1 de §15 y §18, mitad del handler: se toma vistaActual (borrador +
+    // versionMostrada), nunca version. La otra mitad está en conversacion.service.spec.ts.
     const { servicio, cola, responder, conversacion } = crear();
-    conversacion.versionMostrada.mockResolvedValueOnce(1);
+    conversacion.vistaActual.mockResolvedValueOnce(VISTA);
 
     await servicio.recibirTexto(CHAT, UPDATE, 'sí', responder);
 
-    expect(conversacion.versionMostrada).toHaveBeenCalledWith(CHAT);
+    expect(conversacion.vistaActual).toHaveBeenCalledWith(CHAT);
     expect(cola.encolar).toHaveBeenCalledWith(
-      { tipo: 'texto', chatId: CHAT, texto: 'sí', versionVista: 1 },
+      { tipo: 'texto', chatId: CHAT, texto: 'sí', vista: VISTA },
       `tg-${UPDATE}`,
     );
     expect(responder).not.toHaveBeenCalled();
@@ -118,24 +122,22 @@ describe('TelegramService: texto', () => {
 
     await servicio.recibirTexto(CHAT, UPDATE, 'cancelar', responder);
 
-    expect(conversacion.versionMostrada).not.toHaveBeenCalled();
+    expect(conversacion.vistaActual).not.toHaveBeenCalled();
     expect(responder).not.toHaveBeenCalled();
     expect(cola.encolar).toHaveBeenCalledWith(
-      expect.objectContaining({ texto: 'cancelar', versionVista: null }),
+      expect.objectContaining({ texto: 'cancelar', vista: null }),
       `tg-${UPDATE}`,
     );
   });
 
-  it('si no puede leer la versión, encola el "sí" con versionVista null (no aprobará)', async () => {
+  it('si no puede leer lo que se mostró, encola el "sí" con vista null (no aprobará)', async () => {
     const { servicio, cola, responder, conversacion } = crear();
-    conversacion.versionMostrada.mockRejectedValueOnce(
-      new Error('sin conexión'),
-    );
+    conversacion.vistaActual.mockRejectedValueOnce(new Error('sin conexión'));
 
     await servicio.recibirTexto(CHAT, UPDATE, 'sí', responder);
 
     expect(cola.encolar).toHaveBeenCalledWith(
-      expect.objectContaining({ versionVista: null }),
+      expect.objectContaining({ vista: null }),
       `tg-${UPDATE}`,
     );
   });
@@ -175,7 +177,7 @@ describe('TelegramService: texto', () => {
 
   it('los logs no llevan el chatId ni el texto', async () => {
     const { servicio, cola, responder, conversacion } = crear();
-    conversacion.versionMostrada.mockRejectedValueOnce(new Error('x'));
+    conversacion.vistaActual.mockRejectedValueOnce(new Error('x'));
     cola.encolar.mockRejectedValue(new Error(`falló con ${CHAT}`));
     responder.mockRejectedValueOnce(new Error('Bad Gateway'));
 

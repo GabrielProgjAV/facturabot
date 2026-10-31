@@ -13,6 +13,7 @@ import {
   ConversacionService,
   esAprobacion,
   esComando,
+  type VistaBorrador,
 } from '../facturacion/conversacion.service.js';
 import { TranscriptorService } from '../voz/transcriptor.service.js';
 import {
@@ -113,7 +114,7 @@ export class TelegramService
     );
   }
 
-  /** Valida un texto, captura la versión vista si es un "sí" y lo encola. */
+  /** Valida un texto, captura lo que el usuario veía si es un "sí" y lo encola. */
   async recibirTexto(
     chatId: number,
     updateId: number,
@@ -124,14 +125,14 @@ export class TelegramService
       await this.avisar(responder, MENSAJES_RECEPCION.textoLargo);
       return;
     }
-    const versionVista = esAprobacion(texto)
-      ? await this.leerVersionVista(chatId, updateId)
+    const vista = esAprobacion(texto)
+      ? await this.leerVista(chatId, updateId)
       : null;
     // "sí" y "cancelar" no pasan por la IA: su respuesta llega enseguida, sin aviso previo.
     if (!esComando(texto))
       await this.avisar(responder, MENSAJES_RECEPCION.procesando);
     await this.encolar(
-      { tipo: 'texto', chatId, texto, versionVista },
+      { tipo: 'texto', chatId, texto, vista },
       updateId,
       responder,
     );
@@ -242,8 +243,8 @@ export class TelegramService
 
   private dependenciasProcesador(): DependenciasProcesador {
     return {
-      responder: (chatId, texto, versionVista) =>
-        this.conversacion.responder(chatId, texto, versionVista),
+      responder: (chatId, texto, vista) =>
+        this.conversacion.responder(chatId, texto, vista),
       marcarMostrada: (borradorId, version) =>
         this.conversacion.marcarMostrada(borradorId, version),
       descargarVoz: (fileId) => this.descargarVoz(fileId),
@@ -255,15 +256,16 @@ export class TelegramService
   }
 
   /**
-   * versionVista = versionMostrada del borrador PENDIENTE al recibir el "sí": la versión que el
-   * usuario tenía en pantalla. Nunca `version`, que puede ir por delante (§3 del plan).
+   * Borrador PENDIENTE y versionMostrada al recibir el "sí": lo que el usuario tenía en pantalla.
+   * Nunca `version`, que puede ir por delante (§3 del plan), y siempre con el id del borrador
+   * (§18): la misma versión de otro borrador no vale.
    */
-  private async leerVersionVista(
+  private async leerVista(
     chatId: number,
     updateId: number,
-  ): Promise<number | null> {
+  ): Promise<VistaBorrador | null> {
     try {
-      return await this.conversacion.versionMostrada(chatId);
+      return await this.conversacion.vistaActual(chatId);
     } catch (err) {
       // Sin versión, el "sí" no aprueba: reenvía el resumen y pide confirmar otra vez.
       this.logger.warn(

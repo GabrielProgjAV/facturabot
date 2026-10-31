@@ -1,6 +1,9 @@
 import type { LoggerService } from '@nestjs/common';
 import { z } from 'zod';
-import type { RespuestaConversacion } from '../facturacion/conversacion.service.js';
+import type {
+  RespuestaConversacion,
+  VistaBorrador,
+} from '../facturacion/conversacion.service.js';
 
 /** Máximo de caracteres de un texto (docs/planes/fase-4.3-cola.md §5). */
 export const LIMITE_TEXTO = 1000;
@@ -23,8 +26,13 @@ export const trabajoMensajeSchema = z.discriminatedUnion('tipo', [
     tipo: z.literal('texto'),
     chatId: z.number().int(),
     texto: z.string().min(1).max(LIMITE_TEXTO),
-    /** versionMostrada del borrador al recibir un "sí"; null en los demás mensajes. */
-    versionVista: z.number().int().positive().nullable(),
+    /** Borrador y versión mostrados al recibir un "sí"; null en los demás mensajes. */
+    vista: z
+      .object({
+        borradorId: z.uuid(),
+        version: z.number().int().positive(),
+      })
+      .nullable(),
   }),
   z.object({
     tipo: z.literal('voz'),
@@ -57,7 +65,7 @@ export interface DependenciasProcesador {
   responder(
     chatId: number,
     texto: string,
-    versionVista: number | null,
+    vista: VistaBorrador | null,
   ): Promise<RespuestaConversacion>;
   marcarMostrada(borradorId: string, version: number): Promise<void>;
   descargarVoz(fileId: string): Promise<Uint8Array<ArrayBuffer>>;
@@ -98,12 +106,7 @@ export async function procesarMensaje(
         ? await procesarVoz(trabajo.fileId, ctx)
         : // Con ECONNREFUSED nada se aplicó: ni la IA respondió ni se escribió en la base.
           await conReintento(
-            () =>
-              deps.responder(
-                trabajo.chatId,
-                trabajo.texto,
-                trabajo.versionVista,
-              ),
+            () => deps.responder(trabajo.chatId, trabajo.texto, trabajo.vista),
             esConexionRechazada,
             ctx,
           );

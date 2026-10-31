@@ -51,11 +51,16 @@ function crearDeps() {
   return { deps, logs };
 }
 
-const texto = (versionVista: number | null = null) => ({
+/** Borrador y versión que veía el usuario (uuid ficticio). */
+const VISTA = {
+  borradorId: '01900000-0000-7000-8000-000000000001',
+  version: 1,
+};
+const texto = (vista: typeof VISTA | null = null) => ({
   tipo: 'texto',
   chatId: CHAT,
   texto: TEXTO,
-  versionVista,
+  vista,
 });
 const voz = { tipo: 'voz', chatId: CHAT, fileId: 'archivo-1' };
 
@@ -63,9 +68,9 @@ describe('procesarMensaje: texto', () => {
   it('llama a la conversación, envía la respuesta y luego marca la versión mostrada', async () => {
     const { deps } = crearDeps();
 
-    await procesarMensaje(texto(1), 'j1', deps);
+    await procesarMensaje(texto(VISTA), 'j1', deps);
 
-    expect(deps.responder).toHaveBeenCalledWith(CHAT, TEXTO, 1);
+    expect(deps.responder).toHaveBeenCalledWith(CHAT, TEXTO, VISTA);
     expect(deps.enviar).toHaveBeenCalledWith(CHAT, 'Resumen');
     expect(deps.marcarMostrada).toHaveBeenCalledWith('b1', 2);
     expect(deps.enviar.mock.invocationCallOrder[0]).toBeLessThan(
@@ -77,7 +82,7 @@ describe('procesarMensaje: texto', () => {
     const { deps } = crearDeps();
     deps.responder.mockResolvedValueOnce({ texto: '✅ Factura aprobada.' });
 
-    await procesarMensaje(texto(1), 'j1', deps);
+    await procesarMensaje(texto(VISTA), 'j1', deps);
 
     expect(deps.marcarMostrada).not.toHaveBeenCalled();
   });

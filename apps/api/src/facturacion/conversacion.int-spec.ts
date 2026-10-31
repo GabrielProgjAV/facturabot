@@ -93,10 +93,10 @@ describe('aprobación por versión contra PostgreSQL', () => {
     });
 
     await servicio.marcarMostrada(id, 1);
-    const versionVista = await servicio.versionMostrada(CHAT_A);
-    const respuesta = await servicio.responder(CHAT_A, 'sí', versionVista);
+    const vista = await servicio.vistaActual(CHAT_A);
+    const respuesta = await servicio.responder(CHAT_A, 'sí', vista);
 
-    expect(versionVista).toBe(1);
+    expect(vista).toEqual({ borradorId: id, version: 1 });
     expect(respuesta.texto).toContain('aprobada');
     expect((await estadoDe(id)).estado).toBe('APROBADO');
   });
@@ -104,12 +104,41 @@ describe('aprobación por versión contra PostgreSQL', () => {
   it('version 2, versionMostrada 1, versionVista 2: no aprueba y la fila sigue PENDIENTE', async () => {
     const fila = await crearPendiente(CHAT_A, 2, 1);
 
-    const respuesta = await servicio.responder(CHAT_A, 'sí', 2);
+    const respuesta = await servicio.responder(CHAT_A, 'sí', {
+      borradorId: fila.id,
+      version: 2,
+    });
 
     expect(respuesta.texto).toContain('otra vez');
     expect(await estadoDe(fila.id)).toEqual({
       estado: 'PENDIENTE',
       version: 2,
+      versionMostrada: 1,
+    });
+  });
+
+  it('"cancelar" → factura nueva → "sí" en cola: el "sí" no aprueba el borrador nuevo', async () => {
+    // El usuario veía A v1 al escribir "sí"; al procesarlo, A está cancelado y B (v1) ya se mostró.
+    const a = await crearPendiente(CHAT_A, 1, 1);
+    const vistaDeA = await servicio.vistaActual(CHAT_A);
+    await servicio.responder(CHAT_A, 'cancelar', null);
+    const nueva = await servicio.responder(
+      CHAT_A,
+      'factura a Ferretería Ejemplo',
+      null,
+    );
+    const b = nueva.mostrar!.borradorId;
+    creadas.push(b);
+    await servicio.marcarMostrada(b, 1);
+
+    const respuesta = await servicio.responder(CHAT_A, 'sí', vistaDeA);
+
+    expect(vistaDeA).toEqual({ borradorId: a.id, version: 1 });
+    expect(respuesta.texto).toContain('otra vez');
+    expect((await estadoDe(a.id)).estado).toBe('CANCELADO');
+    expect(await estadoDe(b)).toEqual({
+      estado: 'PENDIENTE',
+      version: 1,
       versionMostrada: 1,
     });
   });
@@ -160,7 +189,10 @@ describe('aprobación por versión contra PostgreSQL', () => {
       interprete,
     );
 
-    const respuesta = await conCarrera.responder(CHAT_B, 'sí', 1);
+    const respuesta = await conCarrera.responder(CHAT_B, 'sí', {
+      borradorId: fila.id,
+      version: 1,
+    });
 
     expect(respuesta.texto).not.toContain('aprobada');
     expect(respuesta.texto).toContain('otra vez');

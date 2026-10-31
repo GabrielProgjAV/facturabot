@@ -25,13 +25,23 @@ export function esComando(texto: string): boolean {
   return CANCELAR.test(texto) || APROBAR.test(texto);
 }
 
+/**
+ * Lo que el usuario tenía en pantalla al escribir un "sí": qué borrador y en qué versión.
+ * Con solo la versión, un "sí" podía aprobar otro borrador en la misma versión (p. ej. tras
+ * "cancelar" y una factura nueva en cola).
+ */
+export interface VistaBorrador {
+  borradorId: string;
+  version: number;
+}
+
 export interface RespuestaConversacion {
   texto: string;
   /**
    * El texto lleva el resumen de esta versión del borrador. Quien lo envía llama a
    * `marcarMostrada` solo cuando el canal confirma el envío.
    */
-  mostrar?: { borradorId: string; version: number };
+  mostrar?: VistaBorrador;
 }
 
 /**
@@ -41,7 +51,7 @@ export interface RespuestaConversacion {
  *
  * Cada escritura de `datos` sube `version`. Un "sí" solo aprueba la versión que el usuario vio:
  * la que el canal confirmó haber mostrado (`versionMostrada`) y que el usuario tenía en pantalla
- * al escribir (`versionVista`). Ver docs/planes/fase-4.3-cola.md §3.
+ * al escribir (`vista`, que también fija el borrador). Ver docs/planes/fase-4.3-cola.md §3 y §18.
  */
 @Injectable()
 export class ConversacionService {
@@ -53,13 +63,14 @@ export class ConversacionService {
   ) {}
 
   /**
-   * Versión del borrador PENDIENTE que el usuario tiene en pantalla, o null si no hay borrador
-   * o nunca se mostró. Sale de `versionMostrada`, nunca de `version`: `version` puede ir por
-   * delante con una corrección guardada que el usuario todavía no recibió.
+   * Borrador PENDIENTE y versión que el usuario tiene en pantalla, o null si no hay borrador o
+   * nunca se mostró. La versión sale de `versionMostrada`, nunca de `version`: `version` puede ir
+   * por delante con una corrección guardada que el usuario todavía no recibió.
    */
-  async versionMostrada(chatId: number): Promise<number | null> {
+  async vistaActual(chatId: number): Promise<VistaBorrador | null> {
     const pendiente = await this.buscarPendiente(chatId);
-    return pendiente?.versionMostrada ?? null;
+    if (!pendiente || pendiente.versionMostrada === null) return null;
+    return { borradorId: pendiente.id, version: pendiente.versionMostrada };
   }
 
   /**
@@ -74,13 +85,13 @@ export class ConversacionService {
   }
 
   /**
-   * @param versionVista versión que el usuario tenía en pantalla cuando escribió el mensaje
-   *   (`versionMostrada` leída al recibirlo). Solo se usa para aprobar.
+   * @param vista borrador y versión que el usuario tenía en pantalla cuando escribió el mensaje
+   *   (`vistaActual` leída al recibirlo). Solo se usa para aprobar.
    */
   async responder(
     chatId: number,
     texto: string,
-    versionVista: number | null,
+    vista: VistaBorrador | null,
   ): Promise<RespuestaConversacion> {
     const pendiente = await this.buscarPendiente(chatId);
 
@@ -97,7 +108,7 @@ export class ConversacionService {
 
     if (APROBAR.test(texto)) {
       if (!pendiente) return { texto: 'No hay ninguna factura en curso.' };
-      return this.aprobar(pendiente, versionVista);
+      return this.aprobar(pendiente, vista);
     }
 
     const fila = pendiente
@@ -108,12 +119,16 @@ export class ConversacionService {
 
   private async aprobar(
     pendiente: Borrador,
-    versionVista: number | null,
+    vista: VistaBorrador | null,
   ): Promise<RespuestaConversacion> {
     const v = pendiente.version;
-    // Las dos condiciones (§3): lo guardado es lo que se mostró, y lo mostrado es lo que el
-    // usuario tenía en pantalla al escribir "sí".
-    if (pendiente.versionMostrada !== v || versionVista !== v) {
+    // Las condiciones (§3 y §18): lo guardado es lo que se mostró, y lo mostrado es lo que el
+    // usuario tenía en pantalla al escribir "sí": el mismo borrador y la misma versión.
+    if (
+      pendiente.versionMostrada !== v ||
+      vista?.version !== v ||
+      vista.borradorId !== pendiente.id
+    ) {
       return this.conResumen(pendiente, true);
     }
 
