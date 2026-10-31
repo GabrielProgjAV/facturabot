@@ -223,7 +223,8 @@ profundidad. Si la reinterpretación falla, aplica el mensaje de "Ollama caído"
 ## 7. Datos en Redis y riesgo del AOF
 
 - Las notas de voz solo guardan el `file_id`, nunca el audio.
-- El texto sí va en el trabajo. Retención: `removeOnComplete: true` y `removeOnFail: { age: 24 h }`.
+- El texto sí va en el trabajo. Retención: `removeOnComplete: true` y `removeOnFail: true` (cambió el
+  2026-10-30, ver §18.4: con `{ age: 24 h }` el borrado era perezoso).
 - **Riesgo (punto 5):** con `appendonly yes`, cada `add` queda escrito en el archivo AOF. Borrar el
   trabajo agrega un `DEL`, pero **el texto original sigue en el AOF hasta su reescritura**. Redis
   reescribe solo cuando el AOF duplica su tamaño y pasa de 64 MB (`auto-aof-rewrite-min-size`).
@@ -447,6 +448,7 @@ en RAM.
    que no esté en el esquema podría eliminarse en un diff futuro. Recomiendo: sí, sabiendo que una
    *preview* puede cambiar.
 6. Retención en Redis: `removeOnComplete: true` y fallidos 24 h. Recomiendo: sí.
+   **Cambiada el 2026-10-30 (aprobado por Gabriel): fallidos con `removeOnFail: true`** (§18.4).
 7. Alertas: solo logs hasta la fase 6. Recomiendo: sí.
 8. **Límite de texto de 1.000 caracteres.** Recomiendo: sí.
 9. **Criterio de memoria** basado en la paginación, y el orden de opciones A → B (§8).
@@ -559,8 +561,8 @@ criterio de memoria y el `.wslconfig` (§17). Las mediciones están fuera del re
 
 ## 18. Auditoría independiente de la 4.3 (2026-10-30, solo lectura)
 
-Todos los datos de ejemplo de esta sección son ficticios. **Estado: propuestas pendientes de
-aprobación; no hay código escrito.**
+Todos los datos de ejemplo de esta sección son ficticios. **Estado: §18.1 aprobado y resuelto el
+2026-10-30; §18.2 y §18.3 quedan para la 4.4 y la 3.5.**
 
 ### 18.1 Para cerrar la 4.3 (dentro del paso 9, antes de los subagentes)
 
@@ -636,7 +638,47 @@ aprobación; no hay código escrito.**
     desconocido.
 13. Subir zod a 4.6.6 en un PR aparte: el aviso GHSA-mrhx-c7xc-m3w5 (severidad alta) afecta a
     `< 4.6.6` (agotar memoria validando arreglos grandes sin límite de longitud).
-14. Prueba de integración de BullMQ con un Redis real en el CI.
+14. Prueba de integración de BullMQ con un Redis real en el CI. **Avance:** el CI ya levanta Redis
+    y `cola-fallidos.int-spec.ts` prueba la retención de fallidos (§18.4); falta probar el flujo
+    completo de la cola.
+
+### 18.4 Revisión de `control-calidad` y `seguridad` (2026-10-30)
+
+`control-calidad` respondió "ok". **Resuelto antes de cerrar la 4.3** (aprobado por Gabriel):
+
+- **Un "sí" podía aprobar otro borrador** (seguridad, media). La vista guardaba solo la versión:
+  con "cancelar" → factura nueva → "sí" en cola, el "sí" escrito viendo A v1 aprobaba B v1. Ahora el
+  trabajo lleva `vista: { borradorId, version }` (validada con Zod) y se exige el mismo borrador.
+  Tests unitario y de integración; una prueba de mutación confirmó que, sin la comparación del id,
+  el escenario aprueba B contra PostgreSQL real.
+- **Fallidos con `removeOnFail: true`** (seguridad, media). Verificado en bullmq 6.3.15: el borrado
+  por antigüedad (`removeJobsByMaxAge`) solo corre dentro de `moveToFinished`, es decir, cuando otro
+  trabajo termina en ese conjunto, así que un fallido podía quedarse días con el texto del cliente.
+  El evento `'failed'` del Worker se emite después de `moveToFailed` con el mismo objeto `job` en
+  memoria, también en el camino de un trabajo stalled. `cola-fallidos.int-spec.ts` lo prueba con
+  BullMQ y Redis reales en los dos caminos; con `{ age: 24 h }` la prueba falla. Cambia la decisión 6.
+- **Apagado:** `beforeApplicationShutdown` con `try/finally` (si el worker falla al cerrar, se
+  cierran igual la cola y las conexiones), y `vi.restoreAllMocks()` en `afterEach` de
+  `apagado.spec.ts` (control-calidad).
+- **Datos ficticios marcados** en las instrucciones del intérprete (comentario fuera del texto, que no
+  cambia), `factura.spec.ts` (nombre del cliente cambiado por uno inventado) e
+  `interprete-texto.service.spec.ts`.
+
+**Para el plan de la 4.4:**
+- Duración real de la nota: la declara el cliente y puede mentir (con Opus de baja tasa, 1 MB son
+  hasta ~20 min de CPU de Whisper). Calcularla con la *granule position* de la última página OggS
+  (÷ 48.000) antes de transcribir, junto con el límite de frecuencia por chat (§17).
+- Descarga por partes: rechazar por `content-length` y cortar la lectura al pasar
+  `TAMANO_MAXIMO_VOZ_BYTES`, en vez de cargar hasta 20 MB en memoria cuando no viene `file_size`.
+
+**Para la fase 3.5:**
+- Whisper en una red de Docker propia, separada de Redis y PostgreSQL, e imágenes fijadas por
+  *digest* (whisper, postgres, redis, también en el CI) con Dependabot para Docker, junto con §18.3
+  punto 10. Cambiar la contraseña local de PostgreSQL por una que no esté en el repo (`.env`).
+- Validar con Zod las respuestas de Whisper (`{ text }`) y de Ollama (`message.content`), con un
+  error propio si no cumplen, junto con la validación de `datos` de §17.
+
+**Aceptado:** el límite de 1.000 caracteres cuenta unidades UTF-16 (un emoji cuenta como 2).
 
 ## Para estudiar
 
