@@ -37,7 +37,7 @@ También: crear clientes sin facturar, notas crédito y reportes ("¿cuánto ven
 | 1 | Base del proyecto (NestJS, Docker, configuración, base de datos) | ✅ Hecha |
 | 2 | Bot eco en **Telegram** | ✅ Hecha |
 | 3 | **Factura por texto:** la IA entiende el mensaje, pide lo que falta, muestra el borrador y espera la aprobación humana | ✅ Hecha |
-| 4 | **Factura por voz:** nota de voz → texto (Whisper) → mismo flujo de la fase 3 | ⚪ Pendiente |
+| 4 | **Factura por voz:** nota de voz → texto (Whisper) → mismo flujo de la fase 3 | 🟡 En curso (4.1–4.3 hechas; sigue 4.4) |
 | 5 | **Facturas de compra en PDF → base de inventario:** leer pedidos de proveedores y registrar las entradas de productos (todavía sin descontar ventas) | ⚪ Pendiente |
 | 6 | Conexión con Alegra y emisión real tras la aprobación | ⚪ Pendiente |
 | 7 | Clientes sin factura y notas crédito | ⚪ Pendiente |
@@ -208,24 +208,68 @@ También: crear clientes sin facturar, notas crédito y reportes ("¿cuánto ven
   el volumen `whisper_cache`). Se eligió Docker para no instalar nada en Windows. La imagen ocupa
   ~8,2 GB en disco (~2,6 GB de descarga). Prueba con una nota de voz sintética de ~10 s: **~5 s** de
   transcripción, texto correcto salvo "la canegra" (laca negra) y la cédula escrita como
-  "1-0-2-0-3-0-4-0-5-0" → se normalizará en código.
+  "1-0-2-0-3-0-4-0-5-0" (ficticia) → se normalizará en código.
 - **4.2** El bot recibe notas de voz: las descarga de Telegram **en memoria** (no se guardan en disco,
   pueden tener datos de clientes), las envía a Whisper con `TranscriptorService`
   (`src/voz/`, independiente del canal; `WHISPER_URL` con valor por defecto) y responde
   "🎤 Entendí: …". Límite de **2 minutos** por nota para no bloquear la CPU. La URL de descarga lleva
   el token del bot, por eso nunca se registra en los logs. Sin dependencias nuevas (`fetch`,
   `FormData` y `Blob` vienen con Node 24).
-- **4.2b** Precisión de la transcripción. Problema real: "NIT 900111222" se transcribió "knit
-  90011122". Se midieron configuraciones con 6 audios de prueba (2 voces sintéticas, 3 frases con NIT
-  o cédula): con `small`, solo 1 de 6 identificaciones salió exacta; el modelo **pierde dígitos
+- **4.2b** Precisión de la transcripción. Problema real: "NIT 900111222" (ficticio) se transcribió
+  "knit 90011122". Se midieron configuraciones con 6 audios de prueba (2 voces sintéticas, 3 frases
+  con NIT o cédula): con `small`, solo 1 de 6 identificaciones salió exacta; el modelo **pierde dígitos
   repetidos** (111 → 11, 999 → 99). Se agregó un **contexto del negocio** (`initial_prompt`) y el
   **filtro de voz** (`vad_filter`): mejora las palabras ("laca negra", "El Tornillo", "80 mil") pero
   **no** los números (siguió 1/6). Lección: en una primera medición el contexto incluía el mismo NIT
   de la prueba y daba 3/6; sin ese dato de prueba el resultado real era 1/6.
 - **4.2c** Modelo **`large-v3-turbo`** (~1,6 GB): con los mismos 6 audios, **4/6** identificaciones
   exactas (vs 1/6) y "NIT" reconocido 6/6, a cambio de ~12 s por nota (vs ~3 s). Se adopta como modelo
-  por defecto. Sigue fallando con secuencias como 800999000, por eso el borrador marcará para revisión
-  el NIT o la cédula que vengan de una nota de voz (paso 4.4).
+  por defecto. Sigue fallando con secuencias como 800999000 (ficticio), por eso el borrador marcará
+  para revisión el NIT o la cédula que vengan de una nota de voz (paso 4.4).
+- **4.3** Cola **Redis + BullMQ** para texto y voz (plan: `docs/planes/fase-4.3-cola.md`). El
+  handler de Telegram solo valida, avisa ("✍️ Procesando…" / "🎤 Escuchando…") y encola en menos de
+  1 s; un worker con **concurrencia 1** procesa los mensajes en orden. Así una nota de voz larga ya no
+  bloquea a los demás chats. Dependencias nuevas: `bullmq` 6.3.15 e `ioredis` 5.11.1, en versión
+  exacta (~12 MB en disco).
+  - **Sin reintentos de BullMQ:** un reintento pone el trabajo detrás de los siguientes (rompe el
+    orden) y reinterpretar "agrega una brocha" agregaría dos. Solo hay un reintento interno a los 2 s
+    para la descarga de Telegram y para `ECONNREFUSED` a Ollama o Whisper; los timeouts no se
+    reintentan. Con `maxStalledCount: 0`, un trabajo cortado por un reinicio falla y se le avisa al
+    usuario en vez de repetirse.
+  - **Aprobación solo de lo que el usuario vio:** columnas `version` y `version_mostrada`. Al
+    recibir un "sí" se guarda qué borrador y qué versión tenía el usuario en pantalla; aprueba solo si
+    es el mismo borrador y `version == versionMostrada ==` la versión vista, en una sola escritura
+    atómica (`updateMany` + `count`). `versionMostrada` se marca solo cuando Telegram confirma el
+    envío.
+  - **Índice único parcial** en PostgreSQL: a lo sumo un borrador PENDIENTE por chat (*preview
+    feature* `partialIndexes`; Prisma queda fijado en 7.10.0 mientras siga en *preview*). Comprobado
+    contra la base: violar el índice da `P2002`, pero sin `meta.target`, así que el código mira solo
+    el `code`. El CI ahora levanta PostgreSQL, aplica las migraciones y corre `pnpm test:int`.
+  - **Límites:** texto de 1.000 caracteres; voz de 120 s y **1 MB** (una nota de 87 s pesó 344 KB,
+    ~4 KB/s); descarga de 30 s. El jobId es `tg-<update_id>` (BullMQ no acepta enteros como id) e
+    ignora una entrega repetida mientras el trabajo sigue en la cola. Los logs llevan jobId, etapa y
+    duración; nunca el texto, la transcripción ni el chatId.
+  - **Prueba manual (2026-10-30):** el guion completo salió como se esperaba, incluido el "sí" enviado
+    justo después de una corrección (no aprobó) y el orden de dos mensajes seguidos. Latencia por
+    trabajo: texto 6,5–15 s; lista de 9 productos 44,8 s; ~10 s extra cuando qwen se había
+    descargado; nota de voz de ~10 s → 13 s, de 87 s → 39 s; "sí" y "cancelar" ~0,3 s.
+  - **Memoria:** la línea base en reposo cambia mucho de un día a otro, así que el criterio se compara
+    con la base del mismo día. Para que WSL no retenga RAM se configuró `%UserProfile%\.wslconfig`
+    (fuera del repo) con `memory=6GB` y `autoMemoryReclaim=dropCache`; con una nota de ~2 min, Whisper
+    llegó a 2,92 GiB y la VM a 3,6 de 5,9 GB.
+  - **Retención en Redis:** los trabajos terminados y los fallidos se borran al instante
+    (`removeOnFail: true`). Con la retención de 24 h, BullMQ solo limpiaba por antigüedad cuando
+    otro trabajo terminaba, así que un fallido podía quedarse días; se comprobó con una prueba
+    contra Redis real, que ahora también corre en el CI.
+  - **Riesgo de Redis (AOF):** el texto de un trabajo queda en el archivo AOF hasta que Redis lo
+    reescribe, aunque el trabajo se borre. Mientras no haya reescritura periódica (antes de conectar
+    Alegra), se puede forzar a mano: `docker compose exec redis redis-cli BGREWRITEAOF`.
+  - **Lección:** una auditoría independiente y los subagentes `control-calidad` y `seguridad`
+    encontraron, antes de cerrar la subfase, que Prisma se desconectaba antes de que el worker
+    terminara su trabajo (orden de los hooks de apagado de Nest), un caso de aprobación sin test, que
+    un "sí" en cola podía aprobar **otro** borrador en la misma versión, y la retención perezosa de
+    los fallidos. Todo se corrigió con tests (y pruebas de mutación que confirman que los tests lo
+    detectan); lo que va para la 4.4 y la 3.5 quedó en §18 del plan.
 
 ## 5. Cómo ejecutar
 
@@ -233,7 +277,7 @@ Requisitos: [fnm](https://github.com/Schniz/fnm) (Node 24 según `.nvmrc`), [pnp
 [Docker Desktop](https://www.docker.com/products/docker-desktop/) encendido.
 
 ```bash
-docker compose up -d --wait   # PostgreSQL (localhost:5433) y Redis (localhost:6379)
+docker compose up -d --wait   # PostgreSQL (localhost:5433), Redis (localhost:6379) y Whisper (localhost:9000)
 fnm use                       # activa la versión de Node de .nvmrc
 cd apps/api
 pnpm install
@@ -241,6 +285,7 @@ cp .env.example .env          # solo la primera vez; ajusta valores si hace falt
 pnpm run db:migrate           # crea/actualiza las tablas en PostgreSQL
 pnpm run start:dev            # servidor en http://localhost:3000 con recarga automática
 pnpm test                     # tests unitarios
+pnpm test:int                 # pruebas de integración (PostgreSQL con las migraciones y Redis)
 ```
 
 Para apagar la infraestructura: `docker compose down` (conserva los datos). `docker compose down -v`
