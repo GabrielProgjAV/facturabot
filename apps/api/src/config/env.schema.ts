@@ -21,6 +21,7 @@ export const envSchema = z.object({
     ),
   OLLAMA_URL: z.url().default('http://localhost:11434'),
   OLLAMA_MODELO_TEXTO: z.string().min(1).default('qwen2.5:3b'),
+  WHISPER_URL: z.url().default('http://localhost:9000'),
   // IDs de chat que pueden usar el bot, separados por comas. Vacío = nadie (seguro por defecto).
   TELEGRAM_CHATS_PERMITIDOS: z
     .string()

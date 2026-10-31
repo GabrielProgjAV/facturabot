@@ -85,11 +85,14 @@ explícita.
 ## Arquitectura (`apps/api/src`)
 
 - `config/env.schema.ts`: variables de entorno validadas con Zod al arrancar (falla rápido).
-- `mensajeria/`: `mensaje.ts` (independiente del canal) y `telegram.service.ts` (adaptador grammY).
+- `mensajeria/`: `mensaje.ts` (independiente del canal), `telegram.service.ts` (adaptador grammY: valida
+  y encola), `cola-mensajes.service.ts` (Queue y Worker de BullMQ) y `procesador-mensajes.ts` (lógica de
+  cada trabajo, esquema Zod de los datos que vienen de Redis).
   La interfaz formal `CanalMensajeria` se escribe cuando llegue el segundo canal.
 - `facturacion/`: `factura.ts` (funciones puras: pesos, faltantes, suma, IVA, resumen,
   `motivoNoAprobable`), `interprete-texto.service.ts` (Ollama + esquema Zod), `conversacion.service.ts`
-  (borradores: crear, corregir, cancelar, aprobar con "sí" por regex).
+  (borradores: crear, corregir, cancelar, aprobar con "sí" por regex solo si es el mismo borrador que
+  el usuario veía y `version == versionMostrada ==` la versión vista).
 - `voz/transcriptor.service.ts`: audio → texto con Whisper.
 - `prisma/`: `PrismaService` global. Esquema en `apps/api/prisma/schema.prisma`.
 
@@ -120,10 +123,13 @@ Ollama debe estar corriendo con el modelo oficial descargado.
 ## Estado y plan
 
 - ✅ Fases 0–3: validación, base, bot eco en Telegram y factura por texto (tags `v0.1.0`–`v0.3.0`).
-- 🟡 Fase 4 voz (`feat/fase-4-voz`): ✅ 4.1 Whisper, ✅ 4.2 transcripción. Sigue 4.3 cola BullMQ (texto y voz) y 4.4 voz → borradores.
+- 🟡 Fase 4 voz (`feat/fase-4-voz`, PR #3 en borrador): ✅ 4.1 Whisper, ✅ 4.2 transcripción, ✅ 4.3 cola
+  BullMQ (texto y voz). Sigue 4.4 voz → borradores; su plan incluye §18.2 de `docs/planes/fase-4.3-cola.md`
+  (botón en línea para aprobar, estado real tras un reinicio, precios abreviados). Pendientes para la
+  3.5 en §17 y §18.3 de ese plan.
 - PR de la fase 4: marcar como "(ficticio)" los NIT y cédulas de prueba de la bitácora de los README, sobre todo la cédula de prueba de la bitácora.
 - Auditoría externa independiente (`docs/prompts/auditoria-seguridad.md`): antes de integrar el PR de la fase 4 y antes de empezar la fase 6.
-- Fase 3.5 (tras `v0.4.0`, antes de Alegra): caso f, rechazar total = 0, dígito de verificación del NIT (módulo 11) y test e2e. PR aparte: `OLLAMA_MODELO_TEXTO` por defecto a `qwen2.5:7b`.
+- Fase 3.5 (tras `v0.4.0`, antes de Alegra): caso f, rechazar total = 0 y test e2e (el dígito de verificación del NIT pasó a la 4.4). PR aparte: `OLLAMA_MODELO_TEXTO` por defecto a `qwen2.5:7b`.
 - Después: 5 PDF → inventario · 6 Alegra · 7 clientes y notas crédito · 8 reportes · 9 fotos · 10 WhatsApp · 11 Siigo · 12 multiempresa.
 
 ## Preguntas abiertas

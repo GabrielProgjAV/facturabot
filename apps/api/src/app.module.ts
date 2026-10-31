@@ -5,7 +5,9 @@ import { AppService } from './app.service.js';
 import { validateEnv } from './config/env.schema.js';
 import { ConversacionService } from './facturacion/conversacion.service.js';
 import { InterpreteTextoService } from './facturacion/interprete-texto.service.js';
+import { ColaMensajesService } from './mensajeria/cola-mensajes.service.js';
 import { TelegramService } from './mensajeria/telegram.service.js';
+import { TranscriptorService } from './voz/transcriptor.service.js';
 import { PrismaModule } from './prisma/prisma.module.js';
 
 @Module({
@@ -22,6 +24,8 @@ import { PrismaModule } from './prisma/prisma.module.js';
     AppService,
     InterpreteTextoService,
     ConversacionService,
+    TranscriptorService,
+    ColaMensajesService,
     TelegramService,
   ],
 })

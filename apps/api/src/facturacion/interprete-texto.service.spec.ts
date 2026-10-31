@@ -1,3 +1,4 @@
+// Todos los NIT y cédulas de este archivo son ficticios.
 import { aBorrador, totalSegunMensaje } from './interprete-texto.service.js';
 
 describe('totalSegunMensaje', () => {

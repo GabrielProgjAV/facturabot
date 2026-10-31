@@ -19,6 +19,8 @@ export const respuestaIaSchema = z.object({
 
 export type RespuestaIa = z.infer<typeof respuestaIaSchema>;
 
+// Todos los nombres, NIT y cédulas de los ejemplos de estas instrucciones son ficticios. El
+// texto no se cambia sin pasar por el set de evaluación (CLAUDE.md).
 const INSTRUCCIONES = `Eres el asistente de facturación de un comercio en Colombia.
 Del mensaje del usuario extrae los datos de una factura de venta.
 - cliente_nombre: nombre de la persona o empresa que compra.

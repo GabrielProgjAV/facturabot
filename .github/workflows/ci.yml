@@ -9,14 +9,41 @@ on:
 
 jobs:
   api:
+    # No cambiar el nombre: la protección de main exige este check por su nombre.
     name: api (lint, tipos, tests)
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: apps/api
+    # PostgreSQL y Redis desechables para las pruebas de integración (pnpm test:int). Credenciales
+    # solo de CI: los contenedores viven lo que dura el job y no guardan datos reales.
+    services:
+      redis:
+        image: redis:8-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ci -d ci"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
     env:
-      # El CLI de Prisma lo exige para generar el cliente; los tests no se conectan a la base.
+      # La usan el CLI de Prisma y las pruebas de integración. Los tests unitarios no se conectan.
       DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
+      REDIS_URL: redis://localhost:6379
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -32,3 +59,7 @@ jobs:
       - run: pnpm exec prettier --check src test
       - run: pnpm exec tsc --noEmit -p tsconfig.json
       - run: pnpm test
+      # Aplica las migraciones existentes, sin generar nuevas ni pedir confirmación. Si falla,
+      # el job falla antes de las pruebas de integración.
+      - run: pnpm exec prisma migrate deploy
+      - run: pnpm test:int
