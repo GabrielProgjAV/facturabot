@@ -270,6 +270,16 @@ También: crear clientes sin facturar, notas crédito y reportes ("¿cuánto ven
     un "sí" en cola podía aprobar **otro** borrador en la misma versión, y la retención perezosa de
     los fallidos. Todo se corrigió con tests (y pruebas de mutación que confirman que los tests lo
     detectan); lo que va para la 4.4 y la 3.5 quedó en §18 del plan.
+- **4.4** Voz → borradores y aprobación con botón (plan: `docs/planes/fase-4.4-voz-borradores.md`;
+  el 2026-11-02 el alcance se congeló a lo mínimo para cerrar la fase 4, ver §0 del plan).
+  - **Set de evaluación del intérprete** (`pnpm eval:interprete`, en `apps/api/test/eval/`): los 8
+    casos ficticios del 2026-10-15 contra el Ollama local; no corre en el CI. **Línea base
+    (2026-11-02, `qwen2.5:7b`, instrucciones sin cambios):** 7 de 8 pasan; **f falla** como el
+    2026-10-15: con "el vinilo son 3 galones y quita la brocha", la IA reemplaza el estuco de 40.000
+    por "3 galones de vinilo" de 40.000 (cambia un ítem y le pone un precio que nadie dijo). La
+    comprobación de ítems que desaparecen no lo detecta, porque la cantidad de ítems no baja. Tiempo
+    por caso con qwen cargado: 3,9 a 9,6 s. Arreglarlo (opción D y cambios a las instrucciones) queda
+    para después de Alegra.
 
 ## 5. Cómo ejecutar
 
