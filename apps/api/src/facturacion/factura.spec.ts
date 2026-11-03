@@ -143,6 +143,60 @@ describe('motivoNoAprobable', () => {
   });
 });
 
+describe('identificación del cliente en el borrador (4.4 §5)', () => {
+  // Todos los números son ficticios. El DV de 900000001 es 2 (Orden Administrativa 4 de 1989).
+  const con = (identificacion: string): BorradorFactura => ({
+    ...completo,
+    cliente: { nombre: 'Acrílicos Ejemplo SAS', identificacion },
+  });
+
+  it('NIT con DV correcto: aprobable, y el resumen lo muestra normalizado', () => {
+    const borrador = con('NIT 900.000.001-2'); // ficticio
+
+    expect(motivoNoAprobable(borrador)).toBeNull();
+    expect(resumenBorrador(borrador)).toContain('NIT/CC: 900000001-2');
+    expect(resumenBorrador(borrador)).not.toContain('⚠️');
+  });
+
+  it('NIT con DV que no cuadra: no aprobable, y el resumen lo advierte', () => {
+    const borrador = con('900000001-5'); // ficticio, DV incorrecto a propósito
+
+    expect(motivoNoAprobable(borrador)).toContain(
+      'El dígito de verificación 5 no coincide',
+    );
+    expect(resumenBorrador(borrador)).toContain(
+      '⚠️ El dígito de verificación 5 no coincide',
+    );
+  });
+
+  it('número sin forma confirmada (11 dígitos): no aprobable', () => {
+    expect(motivoNoAprobable(con('12345678901'))).toContain('Tiene 11 dígitos'); // ficticio
+  });
+
+  it('cédula con puntos: aprobable, sin puntos en el resumen', () => {
+    const borrador = con('1.000.000.001'); // cédula ficticia
+
+    expect(motivoNoAprobable(borrador)).toBeNull();
+    expect(resumenBorrador(borrador)).toMatch(/NIT\/CC: 1000000001$/m);
+  });
+
+  it('pasaporte: no se le aplican las reglas de forma ni de DV', () => {
+    const borrador = con('pasaporte AB123456'); // ficticio
+
+    expect(motivoNoAprobable(borrador)).toBeNull();
+  });
+
+  it('sin identificación sigue diciendo que falta, no un problema de forma', () => {
+    const borrador = {
+      ...completo,
+      cliente: { nombre: 'Ana', identificacion: null },
+    };
+
+    expect(motivoNoAprobable(borrador)).toContain('Aún falta');
+    expect(resumenBorrador(borrador)).toContain('NIT/CC: ❓');
+  });
+});
+
 describe('calcularTotales', () => {
   it('suma el IVA del 19 %', () => {
     expect(calcularTotales(135000)).toEqual({

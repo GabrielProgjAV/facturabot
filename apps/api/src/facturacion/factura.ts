@@ -1,3 +1,9 @@
+import {
+  analizarIdentificacion,
+  esDocumentoExtranjero,
+  type Identificacion,
+} from './identificacion.js';
+
 /** Línea de la factura tal como la entendimos (valor = total de la línea, sin IVA). */
 export interface ItemBorrador {
   descripcion: string;
@@ -58,10 +64,28 @@ export function sumaNoCuadra(borrador: BorradorFactura): boolean {
   return suma !== borrador.totalEscrito;
 }
 
+/**
+ * La identificación del cliente analizada (forma y DV), o null si no hay. Se guarda tal como la
+ * escribió el usuario y se analiza al mostrarla o aprobarla: el código decide, nunca la IA.
+ */
+export function identificacionCliente(
+  borrador: BorradorFactura,
+): Identificacion | null {
+  const { identificacion } = borrador.cliente;
+  if (!identificacion) return null;
+  return analizarIdentificacion(
+    identificacion,
+    esDocumentoExtranjero(identificacion),
+  );
+}
+
 /** Por qué no se puede aprobar todavía, o null si está lista para aprobar. */
 export function motivoNoAprobable(borrador: BorradorFactura): string | null {
   const faltantes = camposFaltantes(borrador);
   if (faltantes.length > 0) return `Aún falta: ${faltantes.join(', ')}.`;
+  // El DV no cuadra o el número no tiene una forma confirmada: no se corrige solo (4.4 §5.1).
+  const problema = identificacionCliente(borrador)?.problema;
+  if (problema) return problema;
   if (sumaNoCuadra(borrador))
     return 'Los productos no suman el total escrito. Corrígelo antes de aprobar.';
   return null;
@@ -75,10 +99,13 @@ const pesos = new Intl.NumberFormat('es-CO', {
 
 /** Mensaje para el usuario con lo entendido, lo que falta y los totales con IVA. */
 export function resumenBorrador(borrador: BorradorFactura): string {
-  const { nombre, identificacion } = borrador.cliente;
+  const { nombre } = borrador.cliente;
+  const id = identificacionCliente(borrador);
+  // Normalizada (sin puntos ni prefijo) si se entendió; si no, tal como se escribió.
+  const numero = id?.numero ? `${id.numero}${id.dv ? `-${id.dv}` : ''}` : null;
   const lineas = [
     '🧾 Borrador de factura',
-    `Cliente: ${nombre ?? '❓'} · NIT/CC: ${identificacion ?? '❓'}`,
+    `Cliente: ${nombre ?? '❓'} · NIT/CC: ${numero ?? borrador.cliente.identificacion ?? '❓'}`,
     ...borrador.items.map(
       (item) =>
         `• ${item.descripcion}: ${item.valor === null ? '❓' : pesos.format(item.valor)}`,
@@ -94,6 +121,7 @@ export function resumenBorrador(borrador: BorradorFactura): string {
       `Total a pagar: ${pesos.format(total)}`,
     );
   }
+  if (id?.problema) lineas.push(`⚠️ ${id.problema}`);
   if (sumaNoCuadra(borrador)) {
     lineas.push(
       '⚠️ Los productos no suman el total escrito. Revisa los valores o escribe "el total es …".',
