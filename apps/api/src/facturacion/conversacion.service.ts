@@ -17,6 +17,25 @@ const CANCELAR = /^\s*cancelar\s*[.!]*\s*$/i;
 const APROBAR =
   /^\s*(s[ií]|ok|dale|listo|apruebo|aprobado|aprobar|confirmo|confirmar)\s*[.!]*\s*$/i;
 
+/**
+ * Un PENDIENTE sin escrituras en este tiempo se da por olvidado (4.4 §14.1). `actualizadoEn` cambia
+ * también al marcar un resumen como mostrado: lo que el usuario acaba de ver no está olvidado.
+ */
+export const QUIETO_MS = 2 * 60 * 60 * 1000;
+
+const formatoFecha = new Intl.DateTimeFormat('es-CO', {
+  day: 'numeric',
+  month: 'short',
+  hour: 'numeric',
+  minute: '2-digit',
+  timeZone: 'America/Bogota',
+});
+
+/** Fecha y hora de Colombia para el usuario: "30 de oct, 9:15 a. m.". */
+export function fechaCorta(fecha: Date): string {
+  return formatoFecha.format(fecha);
+}
+
 /** "sí" o "cancelar": no pasan por la IA, así que no hace falta avisar "Procesando…". */
 export function esComando(texto: string): boolean {
   return CANCELAR.test(texto) || APROBAR.test(texto);
@@ -42,7 +61,7 @@ export interface RespuestaConversacion {
 }
 
 /** Qué decirle al usuario debajo del resumen. */
-type AvisoResumen = 'ninguno' | 'usarBoton' | 'noVigente';
+type AvisoResumen = 'ninguno' | 'usarBoton' | 'noVigente' | 'quieto';
 
 /**
  * Lleva la conversación de cada chat: crea el borrador con el primer mensaje, lo corrige o
@@ -96,6 +115,16 @@ export class ConversacionService {
       return this.conResumen(pendiente, 'usarBoton');
     }
 
+    if (pendiente && quieto(pendiente)) {
+      const nuevo = await this.reemplazar(pendiente, texto);
+      const resumen = this.conResumen(nuevo, 'ninguno');
+      const { nombre } = datosDe(pendiente).cliente;
+      return {
+        ...resumen,
+        texto: `📝 Tenías un borrador sin aprobar del ${fechaCorta(pendiente.actualizadoEn)}${nombre ? ` (${nombre})` : ''}. Lo dejé cancelado y empecé uno nuevo con tu mensaje.\n\n${resumen.texto}`,
+      };
+    }
+
     const fila = pendiente
       ? await this.corregir(pendiente, texto)
       : await this.crear(chatId, texto);
@@ -129,6 +158,9 @@ export class ConversacionService {
     ) {
       return this.conResumen(pendiente, 'noVigente');
     }
+    // Un botón de hace horas no aprueba directo: se reenvía el resumen para revisarlo. Al mostrarlo
+    // se refresca actualizadoEn, así que el botón nuevo sí aprueba.
+    if (quieto(pendiente)) return this.conResumen(pendiente, 'quieto');
 
     const actual = datosDe(pendiente);
     const motivo = motivoNoAprobable(actual);
@@ -214,10 +246,12 @@ export class ConversacionService {
     } else if (aviso === 'usarBoton') {
       siguiente = '👉 Para aprobar, toca ✅ Aprobar en este mensaje.';
     }
-    const encabezado =
-      aviso === 'noVigente'
-        ? 'Ese resumen ya no está vigente. Este es el actual:\n\n'
-        : '';
+    let encabezado = '';
+    if (aviso === 'noVigente') {
+      encabezado = 'Ese resumen ya no está vigente. Este es el actual:\n\n';
+    } else if (aviso === 'quieto') {
+      encabezado = `Este borrador es del ${fechaCorta(fila.actualizadoEn)}; revísalo y aprueba de nuevo.\n\n`;
+    }
     return {
       texto: `${encabezado}${resumenBorrador(borrador)}\n\n${siguiente}`,
       mostrar: { borradorId: fila.id, version: fila.version, aprobable },
@@ -235,6 +269,23 @@ export class ConversacionService {
     return this.prisma.borrador.update({
       where: { id: pendiente.id },
       data: { datos: aJson(borrador), version: { increment: 1 } },
+    });
+  }
+
+  /**
+   * Cancela un PENDIENTE quieto y crea uno nuevo con el mensaje, en una transacción: o pasan las
+   * dos escrituras, o ninguna. Se interpreta antes: si la IA falla, el viejo sigue igual.
+   */
+  private async reemplazar(viejo: Borrador, texto: string): Promise<Borrador> {
+    const borrador = await this.interprete.interpretar(texto, undefined);
+    return this.prisma.$transaction(async (tx) => {
+      await tx.borrador.updateMany({
+        where: { id: viejo.id, estado: 'PENDIENTE' },
+        data: { estado: 'CANCELADO' },
+      });
+      return tx.borrador.create({
+        data: { chatId: viejo.chatId, datos: aJson(borrador) },
+      });
     });
   }
 
@@ -269,6 +320,10 @@ export class ConversacionService {
       where: { chatId: BigInt(chatId), estado: 'PENDIENTE' },
     });
   }
+}
+
+function quieto(fila: Borrador): boolean {
+  return Date.now() - fila.actualizadoEn.getTime() > QUIETO_MS;
 }
 
 function datosDe(fila: Borrador): BorradorFactura {

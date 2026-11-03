@@ -47,6 +47,11 @@ async function crearPendiente(
   return fila;
 }
 
+/** Deja el borrador como si nadie lo hubiera tocado en 3 horas (más que QUIETO_MS). */
+async function envejecer(id: string) {
+  await db.$executeRaw`UPDATE borradores SET actualizado_en = now() - interval '3 hours' WHERE id = ${id}::uuid`;
+}
+
 async function estadoDe(id: string) {
   return db.borrador.findUniqueOrThrow({
     where: { id },
@@ -219,6 +224,62 @@ describe('aprobación por versión contra PostgreSQL', () => {
       version: 2,
       versionMostrada: 1,
     });
+  });
+
+  it('borrador quieto: marcarMostrada refresca actualizado_en (base de QUIETO_MS)', async () => {
+    const fila = await crearPendiente(CHAT_A, 1, 1);
+    await envejecer(fila.id);
+    const antes = await db.borrador.findUniqueOrThrow({
+      where: { id: fila.id },
+    });
+
+    // Misma versión ya mostrada: igual cuenta como "el usuario lo acaba de ver".
+    await servicio.marcarMostrada(fila.id, 1);
+
+    const despues = await db.borrador.findUniqueOrThrow({
+      where: { id: fila.id },
+    });
+    expect(despues.actualizadoEn.getTime()).toBeGreaterThan(
+      antes.actualizadoEn.getTime() + 2 * 60 * 60 * 1000,
+    );
+  });
+
+  it('borrador quieto: un mensaje lo cancela y crea uno nuevo en la misma transacción', async () => {
+    const viejo = await crearPendiente(CHAT_A, 1, 1);
+    await envejecer(viejo.id);
+
+    const respuesta = await servicio.responder(
+      CHAT_A,
+      'factura a Ferretería Ejemplo',
+    );
+    const nuevo = respuesta.mostrar!.borradorId;
+    creadas.push(nuevo);
+
+    expect(respuesta.texto).toContain('Lo dejé cancelado');
+    expect(nuevo).not.toBe(viejo.id);
+    expect((await estadoDe(viejo.id)).estado).toBe('CANCELADO');
+    expect(await estadoDe(nuevo)).toEqual({
+      estado: 'PENDIENTE',
+      version: 1,
+      versionMostrada: null,
+    });
+  });
+
+  it('borrador quieto: el botón viejo reenvía el resumen y el botón nuevo sí aprueba', async () => {
+    const fila = await crearPendiente(CHAT_A, 1, 1);
+    await envejecer(fila.id);
+    const vista = { borradorId: fila.id, version: 1 };
+
+    const reenvio = await servicio.aprobar(CHAT_A, vista, USUARIO);
+    expect(reenvio.texto).toContain('revísalo y aprueba de nuevo');
+    expect((await estadoDe(fila.id)).estado).toBe('PENDIENTE');
+
+    // El procesador marca el resumen reenviado cuando Telegram confirma el envío.
+    await servicio.marcarMostrada(fila.id, 1);
+    const respuesta = await servicio.aprobar(CHAT_A, vista, USUARIO);
+
+    expect(respuesta.texto).toContain('aprobada');
+    expect((await estadoDe(fila.id)).estado).toBe('APROBADO');
   });
 
   it('si la versión cambia entre la lectura y el updateMany, no aprueba (count 0)', async () => {

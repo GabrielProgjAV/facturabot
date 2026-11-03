@@ -1,7 +1,12 @@
 // Todos los NIT y cédulas de este archivo son ficticios.
 import { Prisma } from '../generated/prisma/client.js';
 import type { PrismaService } from '../prisma/prisma.service.js';
-import { ConversacionService, esComando } from './conversacion.service.js';
+import {
+  ConversacionService,
+  esComando,
+  fechaCorta,
+  QUIETO_MS,
+} from './conversacion.service.js';
 import type { BorradorFactura } from './factura.js';
 import type { InterpreteTextoService } from './interprete-texto.service.js';
 
@@ -30,7 +35,8 @@ function fila(cambios: Partial<Fila> = {}): Fila {
     datos: borrador,
     version: 1,
     versionMostrada: 1,
-    actualizadoEn: new Date('2026-11-02T20:05:00Z'),
+    // Recién escrito: un borrador de hace más de 2 horas se trata distinto (QUIETO_MS).
+    actualizadoEn: new Date(),
     aprobadoEn: null,
     ...cambios,
   };
@@ -58,6 +64,8 @@ function crear(pendiente: Fila | null) {
       ),
       updateMany: vi.fn().mockResolvedValue({ count: 1 }),
     },
+    // La transacción recibe el mismo doble: se comprueba qué escribe, no el aislamiento.
+    $transaction: vi.fn((fn: (tx: unknown) => Promise<unknown>) => fn(prisma)),
   };
   const interprete = { interpretar: vi.fn().mockResolvedValue(borrador) };
   const servicio = new ConversacionService(
@@ -395,6 +403,123 @@ describe('ConversacionService', () => {
 
       expect(respuesta.texto).toContain('NIT o cédula');
       expect(prisma.borrador.updateMany).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('borrador quieto (más de 2 horas sin escrituras, 4.4 §14.1)', () => {
+    const haceMs = (ms: number) => new Date(Date.now() - ms);
+    const QUIETO = haceMs(QUIETO_MS + 60_000);
+
+    it('a la 1 h 59 min todavía corrige', async () => {
+      const { servicio, prisma, interprete } = crear(
+        fila({ actualizadoEn: haceMs(QUIETO_MS - 60_000) }),
+      );
+
+      await servicio.responder(42, 'agrega una brocha');
+
+      expect(interprete.interpretar).toHaveBeenCalledWith(
+        'agrega una brocha',
+        borrador,
+      );
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('a las 2 h 01 min cancela el viejo y crea uno nuevo con el mensaje, avisando', async () => {
+      const { servicio, prisma, interprete } = crear(
+        fila({ actualizadoEn: QUIETO }),
+      );
+
+      const respuesta = await servicio.responder(42, 'factura a Pedro');
+
+      expect(interprete.interpretar).toHaveBeenCalledWith(
+        'factura a Pedro',
+        undefined,
+      );
+      expect(prisma.borrador.updateMany).toHaveBeenCalledWith({
+        where: { id: 'b1', estado: 'PENDIENTE' },
+        data: { estado: 'CANCELADO' },
+      });
+      expect(prisma.borrador.create).toHaveBeenCalledWith({
+        data: { chatId: 42n, datos: borrador },
+      });
+      expect(prisma.borrador.update).not.toHaveBeenCalled();
+      expect(respuesta.texto).toMatch(
+        new RegExp(
+          `^📝 Tenías un borrador sin aprobar del ${fechaCorta(QUIETO)} \\(Ana\\)\\. Lo dejé cancelado`,
+        ),
+      );
+      expect(respuesta.mostrar).toEqual({
+        borradorId: 'nuevo',
+        version: 1,
+        aprobable: true,
+      });
+    });
+
+    it('sin nombre de cliente, el aviso no lleva paréntesis', async () => {
+      const { servicio } = crear(
+        fila({
+          actualizadoEn: QUIETO,
+          datos: {
+            ...borrador,
+            cliente: { nombre: null, identificacion: null },
+          },
+        }),
+      );
+
+      const respuesta = await servicio.responder(42, 'factura a Pedro');
+
+      expect(respuesta.texto).toContain(`del ${fechaCorta(QUIETO)}. Lo dejé`);
+    });
+
+    it('si la IA falla, el viejo no se cancela', async () => {
+      const { servicio, prisma, interprete } = crear(
+        fila({ actualizadoEn: QUIETO }),
+      );
+      interprete.interpretar.mockRejectedValueOnce(new Error('timeout'));
+
+      await expect(servicio.responder(42, 'factura a Pedro')).rejects.toThrow(
+        'timeout',
+      );
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+      expect(prisma.borrador.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('"cancelar" y "sí" sobre un borrador quieto funcionan como siempre', async () => {
+      const cancelar = crear(fila({ actualizadoEn: QUIETO }));
+      await cancelar.servicio.responder(42, 'cancelar');
+      expect(cancelar.prisma.borrador.update).toHaveBeenCalledWith({
+        where: { id: 'b1' },
+        data: { estado: 'CANCELADO' },
+      });
+      expect(cancelar.prisma.borrador.create).not.toHaveBeenCalled();
+
+      const si = crear(fila({ actualizadoEn: QUIETO }));
+      const respuesta = await si.servicio.responder(42, 'sí');
+      expect(respuesta.texto).toContain('Para aprobar, toca ✅ Aprobar');
+      expect(si.prisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('el botón Aprobar de un borrador quieto no aprueba: reenvía el resumen para revisarlo', async () => {
+      const { servicio, prisma } = crear(fila({ actualizadoEn: QUIETO }));
+
+      const respuesta = await servicio.aprobar(42, boton(1), USUARIO);
+
+      expect(prisma.borrador.updateMany).not.toHaveBeenCalled();
+      expect(respuesta.texto).toContain(
+        `Este borrador es del ${fechaCorta(QUIETO)}; revísalo y aprueba de nuevo.`,
+      );
+      expect(respuesta.mostrar).toEqual({
+        borradorId: 'b1',
+        version: 1,
+        aprobable: true,
+      });
+    });
+
+    it('fechaCorta usa la hora de Colombia', () => {
+      // 14:15 UTC = 9:15 a. m. en Bogotá (UTC−5, sin horario de verano).
+      expect(fechaCorta(new Date('2026-10-30T14:15:00Z'))).toBe(
+        '30 de oct, 9:15 a. m.',
+      );
     });
   });
 
