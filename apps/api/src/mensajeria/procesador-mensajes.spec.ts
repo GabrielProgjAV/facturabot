@@ -6,6 +6,10 @@ import {
   procesarMensaje,
   VozDemasiadoPesadaError,
 } from './procesador-mensajes.js';
+import { notaOggSintetica } from '../voz/ogg-sintetico.spec-util.js';
+
+/** Nota de voz sintética de 10 s (sin audio real). */
+const NOTA = notaOggSintetica(10);
 
 const CHAT = 4242; // chat ficticio
 const TEXTO = 'factura a Ana, vinilo 50 mil';
@@ -38,7 +42,7 @@ function crearDeps() {
       mostrar: { borradorId: 'b1', version: 2 },
     }),
     marcarMostrada: vi.fn().mockResolvedValue(undefined),
-    descargarVoz: vi.fn().mockResolvedValue(new Uint8Array([1, 2, 3])),
+    descargarVoz: vi.fn().mockResolvedValue(NOTA),
     transcribir: vi.fn().mockResolvedValue('vinilo 50 mil'),
     enviar: vi.fn().mockResolvedValue(undefined),
     esperar: vi.fn().mockResolvedValue(undefined),
@@ -131,18 +135,96 @@ describe('procesarMensaje: texto', () => {
 });
 
 describe('procesarMensaje: voz', () => {
-  it('descarga, transcribe y envía lo que entendió', async () => {
+  it('descarga, transcribe y pasa la transcripción a la conversación, como un texto', async () => {
     const { deps } = crearDeps();
 
     await procesarMensaje(voz, 'j2', deps);
 
     expect(deps.descargarVoz).toHaveBeenCalledWith('archivo-1');
-    expect(deps.transcribir).toHaveBeenCalledWith(new Uint8Array([1, 2, 3]));
+    expect(deps.transcribir).toHaveBeenCalledWith(NOTA);
+    // Sin vista: un "sí" dictado no aprueba (decisión 1 de la 4.4).
+    expect(deps.responder).toHaveBeenCalledWith(CHAT, 'vinilo 50 mil', null);
     expect(deps.enviar).toHaveBeenCalledWith(
       CHAT,
-      '🎤 Entendí: "vinilo 50 mil"',
+      '🎤 Entendí: "vinilo 50 mil"\n\nResumen',
     );
+    expect(deps.marcarMostrada).toHaveBeenCalledWith('b1', 2);
+  });
+
+  it('duración real de más de 120 s (aunque el cliente declare menos): no transcribe', async () => {
+    const { deps } = crearDeps();
+    deps.descargarVoz.mockResolvedValueOnce(notaOggSintetica(121));
+
+    await procesarMensaje(voz, 'j2', deps);
+
+    expect(deps.transcribir).not.toHaveBeenCalled();
+    expect(deps.enviar).toHaveBeenCalledWith(CHAT, MENSAJES_FALLA.vozLarga);
+  });
+
+  it('justo 120 s: se transcribe', async () => {
+    const { deps } = crearDeps();
+    deps.descargarVoz.mockResolvedValueOnce(notaOggSintetica(120));
+
+    await procesarMensaje(voz, 'j2', deps);
+
+    expect(deps.transcribir).toHaveBeenCalled();
+  });
+
+  it('archivo que no es Ogg Opus: no se transcribe ni se reintenta', async () => {
+    const { deps } = crearDeps();
+    deps.descargarVoz.mockResolvedValue(new Uint8Array([1, 2, 3]));
+
+    await procesarMensaje(voz, 'j2', deps);
+
+    expect(deps.descargarVoz).toHaveBeenCalledTimes(1);
+    expect(deps.transcribir).not.toHaveBeenCalled();
+    expect(deps.enviar).toHaveBeenCalledWith(CHAT, MENSAJES_FALLA.voz);
+  });
+
+  it('transcripción de más de 1.000 caracteres: pide dividirla y no la pasa a la IA', async () => {
+    const { deps } = crearDeps();
+    deps.transcribir.mockResolvedValueOnce('a'.repeat(1001));
+
+    await procesarMensaje(voz, 'j2', deps);
+
     expect(deps.responder).not.toHaveBeenCalled();
+    expect(deps.enviar).toHaveBeenCalledWith(
+      CHAT,
+      MENSAJES_FALLA.transcripcionLarga,
+    );
+    expect(MENSAJES_FALLA.transcripcionLarga).toContain('1.000');
+  });
+
+  it('transcripción de exactamente 1.000 caracteres: sí pasa a la conversación', async () => {
+    const { deps } = crearDeps();
+    deps.transcribir.mockResolvedValueOnce('a'.repeat(1000));
+
+    await procesarMensaje(voz, 'j2', deps);
+
+    expect(deps.responder).toHaveBeenCalled();
+  });
+
+  it('Ollama falla después de transcribir: avisa como un texto (el borrador sigue igual)', async () => {
+    const { deps } = crearDeps();
+    deps.responder.mockRejectedValue(new SyntaxError('JSON inválido'));
+
+    await procesarMensaje(voz, 'j2', deps);
+
+    expect(deps.enviar).toHaveBeenCalledWith(CHAT, MENSAJES_FALLA.texto);
+  });
+
+  it('Ollama caído después de transcribir: reintenta la conversación una vez', async () => {
+    const { deps } = crearDeps();
+    deps.responder.mockRejectedValueOnce(conexionRechazada());
+
+    await procesarMensaje(voz, 'j2', deps);
+
+    expect(deps.transcribir).toHaveBeenCalledTimes(1);
+    expect(deps.responder).toHaveBeenCalledTimes(2);
+    expect(deps.enviar).toHaveBeenCalledWith(
+      CHAT,
+      '🎤 Entendí: "vinilo 50 mil"\n\nResumen',
+    );
   });
 
   it('transcripción vacía: avisa que no escuchó nada', async () => {
@@ -188,7 +270,7 @@ describe('procesarMensaje: voz', () => {
     expect(deps.descargarVoz).toHaveBeenCalledTimes(2);
     expect(deps.enviar).toHaveBeenCalledWith(
       CHAT,
-      '🎤 Entendí: "vinilo 50 mil"',
+      '🎤 Entendí: "vinilo 50 mil"\n\nResumen',
     );
   });
 

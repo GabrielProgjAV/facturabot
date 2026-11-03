@@ -9,7 +9,8 @@ import {
 } from './factura.js';
 import { InterpreteTextoService } from './interprete-texto.service.js';
 
-const CANCELAR = /^\s*cancelar\s*$/i;
+// Admite signos finales: Whisper transcribe "Cancelar." (4.4).
+const CANCELAR = /^\s*cancelar\s*[.!]*\s*$/i;
 // Aprobar es la acción más delicada: se reconoce con código, nunca con la IA. Solo aprueba un
 // mensaje que sea únicamente una de estas palabras ("sí, pero cambia el NIT" es una corrección).
 const APROBAR =

@@ -25,6 +25,7 @@ import {
   avisarTrabajoFallido,
   type DependenciasProcesador,
   describirError,
+  DURACION_MAXIMA_VOZ_SEGUNDOS,
   LIMITE_TEXTO,
   MENSAJES_FALLA,
   procesarMensaje,
@@ -33,8 +34,6 @@ import {
   VozDemasiadoPesadaError,
 } from './procesador-mensajes.js';
 
-/** Transcribir ocupa la CPU: una nota más larga bloquearía el equipo. */
-const DURACION_MAXIMA_VOZ_SEGUNDOS = 120;
 /** Tiempo máximo para pedirle el archivo a Telegram y descargarlo. */
 const LIMITE_DESCARGA_MS = 30_000;
 
@@ -44,7 +43,7 @@ export const MENSAJES_RECEPCION = {
   redisCaido:
     '⚠️ No pude recibir tu mensaje ahora. Intenta de nuevo en unos minutos.',
   textoLargo: `El mensaje es muy largo (máx. ${LIMITE_TEXTO.toLocaleString('es-CO')} caracteres). Divídelo o resúmelo.`,
-  vozLarga: `La nota de voz es muy larga. Envía una de máximo ${DURACION_MAXIMA_VOZ_SEGUNDOS / 60} minutos.`,
+  vozLarga: MENSAJES_FALLA.vozLarga,
 } as const;
 
 type SenalGrammy = Parameters<Bot['api']['getFile']>[1];
@@ -198,12 +197,7 @@ export class TelegramService
       if (!descarga.ok) {
         throw new Error(`Telegram respondió ${descarga.status}`);
       }
-      const audio = new Uint8Array(await descarga.arrayBuffer());
-      // Por si Telegram no informó el tamaño: nunca se transcribe una nota más pesada.
-      if (audio.byteLength > TAMANO_MAXIMO_VOZ_BYTES) {
-        throw new VozDemasiadoPesadaError();
-      }
-      return audio;
+      return await leerConLimite(descarga, TAMANO_MAXIMO_VOZ_BYTES);
     } catch (err) {
       // grammY envuelve la cancelación en su propio error: se normaliza para no reintentarla.
       if (senal.aborted) {
@@ -310,6 +304,43 @@ export class TelegramService
       this.logger.warn(`No se pudo enviar el aviso (${describirError(err)})`);
     }
   }
+}
+
+/**
+ * Lee la respuesta por partes y corta en cuanto pasa del límite, en vez de cargar todo en memoria
+ * (la Bot API permite descargar hasta 20 MB). Rechaza antes de leer si `content-length` ya lo supera.
+ */
+async function leerConLimite(
+  respuesta: Response,
+  limite: number,
+): Promise<Uint8Array<ArrayBuffer>> {
+  const declarado = Number(respuesta.headers.get('content-length'));
+  if (declarado > limite) {
+    await respuesta.body?.cancel();
+    throw new VozDemasiadoPesadaError();
+  }
+  if (!respuesta.body) return new Uint8Array(0);
+
+  const lector = respuesta.body.getReader();
+  const partes: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await lector.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > limite) {
+      await lector.cancel();
+      throw new VozDemasiadoPesadaError();
+    }
+    partes.push(value);
+  }
+  const audio = new Uint8Array(total);
+  let posicion = 0;
+  for (const parte of partes) {
+    audio.set(parte, posicion);
+    posicion += parte.byteLength;
+  }
+  return audio;
 }
 
 function aMensajeEntrante(mensaje: Message): MensajeEntrante {

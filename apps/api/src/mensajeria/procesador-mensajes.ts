@@ -4,6 +4,7 @@ import type {
   RespuestaConversacion,
   VistaBorrador,
 } from '../facturacion/conversacion.service.js';
+import { duracionOggOpusSegundos } from '../voz/duracion-ogg.js';
 
 /** Máximo de caracteres de un texto (docs/planes/fase-4.3-cola.md §5). */
 export const LIMITE_TEXTO = 1000;
@@ -13,6 +14,9 @@ export const LIMITE_TEXTO = 1000;
  * nota de 120 s pesa ~0,5 MB; 1 MB deja ~2 veces de margen (§18.1).
  */
 export const TAMANO_MAXIMO_VOZ_BYTES = 1_048_576;
+
+/** Transcribir ocupa la CPU: una nota más larga bloquearía el equipo. */
+export const DURACION_MAXIMA_VOZ_SEGUNDOS = 120;
 
 /** Pausa antes del único reintento interno. */
 export const ESPERA_REINTENTO_MS = 2000;
@@ -46,6 +50,8 @@ export type TrabajoMensaje = z.infer<typeof trabajoMensajeSchema>;
 export const MENSAJES_FALLA = {
   voz: 'No pude escuchar la nota de voz. Intenta en un rato o escríbela.',
   vozPesada: 'La nota de voz es muy pesada. Envíala más corta o escríbela.',
+  vozLarga: `La nota de voz es muy larga. Envía una de máximo ${DURACION_MAXIMA_VOZ_SEGUNDOS / 60} minutos.`,
+  transcripcionLarga: `Entendí una nota de más de ${LIMITE_TEXTO.toLocaleString('es-CO')} caracteres. Divídela en notas más cortas o escríbela.`,
   texto: 'No pude procesar el mensaje. Tu borrador anterior sigue igual.',
   reinicio: 'No alcancé a procesar tu último mensaje. Reenvíalo, por favor.',
   encoladoSinConfirmar:
@@ -57,6 +63,21 @@ export class VozDemasiadoPesadaError extends Error {
   override readonly name = 'VozDemasiadoPesadaError';
   constructor() {
     super(`La nota de voz supera ${TAMANO_MAXIMO_VOZ_BYTES} bytes`);
+  }
+}
+
+/**
+ * La duración real de la nota (leída del Ogg, no la que declara el cliente) supera el máximo, o el
+ * archivo no es un Ogg Opus que se pueda medir. No se reintenta ni se transcribe.
+ */
+export class VozNoAdmitidaError extends Error {
+  override readonly name = 'VozNoAdmitidaError';
+  constructor(readonly motivo: 'larga' | 'ilegible') {
+    super(
+      motivo === 'larga'
+        ? `La nota de voz supera ${DURACION_MAXIMA_VOZ_SEGUNDOS} s`
+        : 'La nota de voz no es un Ogg Opus legible',
+    );
   }
 }
 
@@ -103,7 +124,7 @@ export async function procesarMensaje(
   try {
     respuesta =
       trabajo.tipo === 'voz'
-        ? await procesarVoz(trabajo.fileId, ctx)
+        ? await procesarVoz(trabajo.chatId, trabajo.fileId, ctx)
         : // Con ECONNREFUSED nada se aplicó: ni la IA respondió ni se escribió en la base.
           await conReintento(
             () => deps.responder(trabajo.chatId, trabajo.texto, trabajo.vista),
@@ -114,12 +135,7 @@ export async function procesarMensaje(
     deps.logger.error(
       `Trabajo ${jobId} (${trabajo.tipo}) falló en ${ctx.etapa}: ${describirError(err)}`,
     );
-    respuesta = {
-      texto:
-        err instanceof VozDemasiadoPesadaError
-          ? MENSAJES_FALLA.vozPesada
-          : MENSAJES_FALLA[trabajo.tipo],
-    };
+    respuesta = { texto: mensajeDeFalla(err, trabajo.tipo, ctx.etapa) };
   }
 
   try {
@@ -150,7 +166,25 @@ export async function procesarMensaje(
   );
 }
 
+/** Qué decirle al usuario según el error y la etapa en que ocurrió. */
+function mensajeDeFalla(
+  err: unknown,
+  tipo: TrabajoMensaje['tipo'],
+  etapa: Etapa,
+): string {
+  if (err instanceof VozDemasiadoPesadaError) return MENSAJES_FALLA.vozPesada;
+  if (err instanceof VozNoAdmitidaError) {
+    return err.motivo === 'larga'
+      ? MENSAJES_FALLA.vozLarga
+      : MENSAJES_FALLA.voz;
+  }
+  // Una nota ya transcrita que falla en la conversación es un fallo de Ollama, no de la voz.
+  if (tipo === 'voz' && etapa !== 'conversar') return MENSAJES_FALLA.voz;
+  return MENSAJES_FALLA.texto;
+}
+
 async function procesarVoz(
+  chatId: number,
   fileId: string,
   ctx: { jobId: string; deps: DependenciasProcesador; etapa: Etapa },
 ): Promise<RespuestaConversacion> {
@@ -163,6 +197,13 @@ async function procesarVoz(
     (err) => !esTimeout(err) && !(err instanceof VozDemasiadoPesadaError),
     ctx,
   );
+  // Duración real, leída del Ogg: la que declara el cliente de Telegram puede mentir (4.4 §4).
+  const segundos = duracionOggOpusSegundos(audio);
+  if (segundos === null) throw new VozNoAdmitidaError('ilegible');
+  if (segundos > DURACION_MAXIMA_VOZ_SEGUNDOS) {
+    throw new VozNoAdmitidaError('larga');
+  }
+
   ctx.etapa = 'transcribir';
   const inicio = Date.now();
   const texto = await conReintento(
@@ -171,11 +212,26 @@ async function procesarVoz(
     ctx,
   );
   deps.logger.log(
-    `Trabajo ${ctx.jobId} (voz): transcribir tardó ${Date.now() - inicio} ms`,
+    `Trabajo ${ctx.jobId} (voz): ${Math.round(segundos)} s de audio, transcribir tardó ${Date.now() - inicio} ms`,
   );
-  // La 4.4 pasará la transcripción a la conversación.
+  if (!texto) return { texto: '🎤 No escuché nada en la nota.' };
+  // El mismo límite que un texto escrito (plan de la 4.3, §5).
+  if (texto.length > LIMITE_TEXTO) {
+    return { texto: MENSAJES_FALLA.transcripcionLarga };
+  }
+
+  // La transcripción sigue el mismo camino que un texto: crea o corrige el borrador. Sin vista:
+  // un "sí" dictado no aprueba (decisión 1 de la 4.4); reenvía el resumen vigente.
+  ctx.etapa = 'conversar';
+  const respuesta = await conReintento(
+    () => deps.responder(chatId, texto, null),
+    esConexionRechazada,
+    ctx,
+  );
+  // Un solo mensaje: el usuario compara lo que dijo con lo que se entendió.
   return {
-    texto: texto ? `🎤 Entendí: "${texto}"` : '🎤 No escuché nada en la nota.',
+    texto: `🎤 Entendí: "${texto}"\n\n${respuesta.texto}`,
+    mostrar: respuesta.mostrar,
   };
 }
 

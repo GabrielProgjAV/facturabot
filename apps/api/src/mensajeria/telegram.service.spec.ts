@@ -362,5 +362,51 @@ describe('TelegramService: descargarVoz', () => {
 
       expect(audio.byteLength).toBe(TAMANO_MAXIMO_VOZ_BYTES);
     });
+
+    it('si content-length supera 1 MB, rechaza sin leer el cuerpo', async () => {
+      const { servicio, fetchFalso } = conDescarga(undefined, 10);
+      const leido = vi.fn();
+      // highWaterMark 0: el stream no pide datos por adelantado, solo cuando alguien lee.
+      const cuerpo = new ReadableStream<Uint8Array>(
+        {
+          pull(controlador) {
+            leido();
+            controlador.enqueue(new Uint8Array(10));
+            controlador.close();
+          },
+        },
+        { highWaterMark: 0 },
+      );
+      fetchFalso.mockResolvedValueOnce(
+        new Response(cuerpo, {
+          status: 200,
+          headers: { 'content-length': String(TAMANO_MAXIMO_VOZ_BYTES + 1) },
+        }),
+      );
+
+      await expect(servicio.descargarVoz('archivo-1')).rejects.toBeInstanceOf(
+        VozDemasiadoPesadaError,
+      );
+      expect(leido).not.toHaveBeenCalled();
+    });
+
+    it('cuerpo por partes que pasa de 1 MB: corta la lectura sin leer el resto', async () => {
+      const { servicio, fetchFalso } = conDescarga(undefined, 10);
+      const parte = 256 * 1024;
+      let enviadas = 0;
+      const cuerpo = new ReadableStream<Uint8Array>({
+        pull(controlador) {
+          enviadas += 1;
+          controlador.enqueue(new Uint8Array(parte)); // nunca termina: 20 MB o más
+        },
+      });
+      fetchFalso.mockResolvedValueOnce(new Response(cuerpo, { status: 200 }));
+
+      await expect(servicio.descargarVoz('archivo-1')).rejects.toBeInstanceOf(
+        VozDemasiadoPesadaError,
+      );
+      // 1 MB son 4 partes de 256 KB: se detiene en la quinta, no lee las ochenta.
+      expect(enviadas).toBeLessThanOrEqual(6);
+    });
   });
 });

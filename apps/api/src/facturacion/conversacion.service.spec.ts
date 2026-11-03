@@ -181,6 +181,21 @@ describe('ConversacionService', () => {
       });
     });
 
+    it.each(['Cancelar.', 'cancelar!', ' CANCELAR '])(
+      '"%s" (como lo transcribe Whisper) también cancela',
+      async (texto) => {
+        const { servicio, prisma, interprete } = crear(fila());
+
+        await servicio.responder(42, texto, null);
+
+        expect(prisma.borrador.update).toHaveBeenCalledWith({
+          where: { id: 'b1' },
+          data: { estado: 'CANCELADO' },
+        });
+        expect(interprete.interpretar).not.toHaveBeenCalled();
+      },
+    );
+
     it('"cancelar" sin borrador pendiente solo avisa', async () => {
       const { servicio, prisma } = crear(null);
 

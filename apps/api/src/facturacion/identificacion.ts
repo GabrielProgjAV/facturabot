@@ -49,7 +49,8 @@ export function digitoVerificacion(numero: string): number {
   if (!/^\d{1,9}$/.test(numero)) {
     throw new Error('El DV solo se calcula para números de 1 a 9 dígitos');
   }
-  const suma = [...numero]
+  const suma = numero
+    .split('')
     .reverse()
     .reduce((total, digito, i) => total + Number(digito) * PRIMOS_DV[i], 0);
   const residuo = suma % 11;
