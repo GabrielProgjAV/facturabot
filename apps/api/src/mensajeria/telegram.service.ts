@@ -6,12 +6,12 @@ import {
   OnModuleDestroy,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Bot } from 'grammy';
+import { Bot, InlineKeyboard } from 'grammy';
 import type { Message } from 'grammy/types';
+import { z } from 'zod';
 import type { Env } from '../config/env.schema.js';
 import {
   ConversacionService,
-  esAprobacion,
   esComando,
   type VistaBorrador,
 } from '../facturacion/conversacion.service.js';
@@ -34,6 +34,46 @@ import {
   VozDemasiadoPesadaError,
 } from './procesador-mensajes.js';
 
+/**
+ * Datos del botón "✅ Aprobar": `a:<borradorId>:<version>`. Con un UUID de 36 caracteres y una
+ * versión de hasta 6 dígitos son como máximo 45 bytes (la Bot API admite de 1 a 64).
+ */
+export function datosBotonAprobar(vista: VistaBorrador): string {
+  return `a:${vista.borradorId}:${vista.version}`;
+}
+
+const botonAprobarSchema = z.object({
+  borradorId: z.uuid(),
+  version: z.coerce.number().int().positive().max(999_999),
+});
+
+/** Lee los datos de un botón "✅ Aprobar"; null si no tienen la forma esperada (los envía el cliente). */
+export function leerBotonAprobar(datos: string): VistaBorrador | null {
+  const partes = /^a:([^:]+):(\d{1,6})$/.exec(datos);
+  if (!partes) return null;
+  const vista = botonAprobarSchema.safeParse({
+    borradorId: partes[1],
+    version: partes[2],
+  });
+  return vista.success ? vista.data : null;
+}
+
+/**
+ * Solo usuarios autorizados y solo en chats privados (4.4 §3.5): en un grupo autorizado escribiría
+ * cualquier miembro. `usuarioId` es quien escribe o pulsa el botón (`ctx.from`), no el chat.
+ */
+export function autorizado(
+  tipoChat: string | undefined,
+  usuarioId: number | undefined,
+  permitidos: ReadonlySet<number>,
+): boolean {
+  return (
+    tipoChat === 'private' &&
+    usuarioId !== undefined &&
+    permitidos.has(usuarioId)
+  );
+}
+
 /** Tiempo máximo para pedirle el archivo a Telegram y descargarlo. */
 const LIMITE_DESCARGA_MS = 30_000;
 
@@ -42,6 +82,9 @@ export const MENSAJES_RECEPCION = {
   escuchando: '🎤 Escuchando…',
   redisCaido:
     '⚠️ No pude recibir tu mensaje ahora. Intenta de nuevo en unos minutos.',
+  procesandoBoton: 'Procesando…',
+  botonInvalido: 'Ese botón no es válido.',
+  noAutorizado: 'No estás autorizado para usar este bot.',
   textoLargo: `El mensaje es muy largo (máx. ${LIMITE_TEXTO.toLocaleString('es-CO')} caracteres). Divídelo o resúmelo.`,
   vozLarga: MENSAJES_FALLA.vozLarga,
 } as const;
@@ -78,14 +121,25 @@ export class TelegramService
     const permitidos = new Set(
       config.get('TELEGRAM_CHATS_PERMITIDOS', { infer: true }),
     );
+    // Se autoriza al USUARIO (ctx.from), y solo en chats privados: en un grupo autorizado
+    // escribiría cualquier miembro. Vale también para el botón, que pulsa ctx.from (4.4 §3.5).
+    // En un chat privado, el id del chat y el del usuario coinciden.
     this.bot.use(async (ctx, next) => {
-      if (ctx.chat && permitidos.has(ctx.chat.id)) return next();
-      // El chatId es un dato personal: no va al log.
-      this.logger.warn('Mensaje rechazado de un chat no autorizado');
-      if (ctx.chat)
+      if (autorizado(ctx.chat?.type, ctx.from?.id, permitidos)) return next();
+      const privado = ctx.chat?.type === 'private';
+      // Los ids son datos personales: no van al log.
+      this.logger.warn(
+        'Mensaje rechazado: usuario no autorizado o chat no privado',
+      );
+      if (ctx.callbackQuery) {
+        await ctx.answerCallbackQuery({
+          text: MENSAJES_RECEPCION.noAutorizado,
+        });
+      } else if (privado && ctx.from) {
         await ctx.reply(
-          `No estás autorizado para usar este bot. Tu ID de chat es ${ctx.chat.id}.`,
+          `${MENSAJES_RECEPCION.noAutorizado} Tu ID es ${ctx.from.id}.`,
         );
+      }
     });
 
     this.bot.on('message:text', (ctx) =>
@@ -101,6 +155,16 @@ export class TelegramService
         ctx.chat.id,
         ctx.update.update_id,
         ctx.message.voice,
+        (texto) => ctx.reply(texto),
+      ),
+    );
+    this.bot.on('callback_query:data', (ctx) =>
+      this.recibirBoton(
+        ctx.chat?.id,
+        ctx.update.update_id,
+        ctx.callbackQuery.data,
+        ctx.callbackQuery.message?.message_id,
+        (texto) => ctx.answerCallbackQuery({ text: texto }),
         (texto) => ctx.reply(texto),
       ),
     );
@@ -124,14 +188,33 @@ export class TelegramService
       await this.avisar(responder, MENSAJES_RECEPCION.textoLargo);
       return;
     }
-    const vista = esAprobacion(texto)
-      ? await this.leerVista(chatId, updateId)
-      : null;
     // "sí" y "cancelar" no pasan por la IA: su respuesta llega enseguida, sin aviso previo.
     if (!esComando(texto))
       await this.avisar(responder, MENSAJES_RECEPCION.procesando);
+    await this.encolar({ tipo: 'texto', chatId, texto }, updateId, responder);
+  }
+
+  /**
+   * Botón "✅ Aprobar" pulsado: se responde enseguida al callback (la Bot API exige
+   * answerCallbackQuery para quitar la barra de progreso) y se encola, para procesarlo en orden
+   * detrás de las correcciones que ya estén en la cola (4.4 §2).
+   */
+  async recibirBoton(
+    chatId: number | undefined,
+    updateId: number,
+    datos: string,
+    messageId: number | undefined,
+    responderCallback: Responder,
+    responder: Responder,
+  ): Promise<void> {
+    const vista = leerBotonAprobar(datos);
+    if (!vista || chatId === undefined || messageId === undefined) {
+      await this.avisar(responderCallback, MENSAJES_RECEPCION.botonInvalido);
+      return;
+    }
+    await this.avisar(responderCallback, MENSAJES_RECEPCION.procesandoBoton);
     await this.encolar(
-      { tipo: 'texto', chatId, texto, vista },
+      { tipo: 'aprobar', chatId, ...vista, messageId },
       updateId,
       responder,
     );
@@ -170,8 +253,30 @@ export class TelegramService
   }
 
   /** Envía un mensaje y termina sin error solo si Telegram lo confirmó. */
-  async enviar(chatId: number, texto: string): Promise<void> {
-    await this.bot.api.sendMessage(chatId, texto);
+  async enviar(
+    chatId: number,
+    texto: string,
+    boton: VistaBorrador | null,
+  ): Promise<void> {
+    await this.bot.api.sendMessage(
+      chatId,
+      texto,
+      boton
+        ? {
+            reply_markup: new InlineKeyboard().text(
+              '✅ Aprobar',
+              datosBotonAprobar(boton),
+            ),
+          }
+        : undefined,
+    );
+  }
+
+  /** Quita los botones de un mensaje ya enviado (para que no se pulse dos veces). */
+  async quitarBoton(chatId: number, messageId: number): Promise<void> {
+    await this.bot.api.editMessageReplyMarkup(chatId, messageId, {
+      reply_markup: { inline_keyboard: [] },
+    });
   }
 
   /** Descarga una nota de voz a memoria. El audio nunca se guarda en disco. */
@@ -237,36 +342,17 @@ export class TelegramService
 
   private dependenciasProcesador(): DependenciasProcesador {
     return {
-      responder: (chatId, texto, vista) =>
-        this.conversacion.responder(chatId, texto, vista),
+      responder: (chatId, texto) => this.conversacion.responder(chatId, texto),
+      aprobar: (chatId, vista) => this.conversacion.aprobar(chatId, vista),
       marcarMostrada: (borradorId, version) =>
         this.conversacion.marcarMostrada(borradorId, version),
       descargarVoz: (fileId) => this.descargarVoz(fileId),
       transcribir: (audio) => this.transcriptor.transcribir(audio, 'nota.ogg'),
-      enviar: (chatId, texto) => this.enviar(chatId, texto),
+      enviar: (chatId, texto, boton) => this.enviar(chatId, texto, boton),
+      quitarBoton: (chatId, messageId) => this.quitarBoton(chatId, messageId),
       esperar: (ms) => esperar(ms),
       logger: this.logger,
     };
-  }
-
-  /**
-   * Borrador PENDIENTE y versionMostrada al recibir el "sí": lo que el usuario tenía en pantalla.
-   * Nunca `version`, que puede ir por delante (§3 del plan), y siempre con el id del borrador
-   * (§18): la misma versión de otro borrador no vale.
-   */
-  private async leerVista(
-    chatId: number,
-    updateId: number,
-  ): Promise<VistaBorrador | null> {
-    try {
-      return await this.conversacion.vistaActual(chatId);
-    } catch (err) {
-      // Sin versión, el "sí" no aprueba: reenvía el resumen y pide confirmar otra vez.
-      this.logger.warn(
-        `tg-${updateId}: no se pudo leer la versión vista (${describirError(err)})`,
-      );
-      return null;
-    }
   }
 
   /** Encola con el update_id como jobId: BullMQ ignora una entrega repetida del mismo mensaje. */

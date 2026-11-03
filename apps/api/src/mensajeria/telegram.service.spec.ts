@@ -12,11 +12,17 @@ import {
   TAMANO_MAXIMO_VOZ_BYTES,
   VozDemasiadoPesadaError,
 } from './procesador-mensajes.js';
-import { MENSAJES_RECEPCION, TelegramService } from './telegram.service.js';
+import {
+  autorizado,
+  datosBotonAprobar,
+  leerBotonAprobar,
+  MENSAJES_RECEPCION,
+  TelegramService,
+} from './telegram.service.js';
 
 const CHAT = 4242; // chat ficticio
 const UPDATE = 9001;
-/** Borrador y versión mostrados (uuid ficticio). */
+/** Borrador y versión del botón (uuid ficticio). */
 const VISTA = {
   borradorId: '01900000-0000-7000-8000-000000000001',
   version: 1,
@@ -31,7 +37,7 @@ function crear() {
   const config = {
     get: (clave: string) => valores[clave],
   } as unknown as ConfigService<Env, true>;
-  const conversacion = { vistaActual: vi.fn().mockResolvedValue(VISTA) };
+  const conversacion = {};
   const cola = { encolar: vi.fn().mockResolvedValue(undefined) };
   const servicio = new TelegramService(
     config,
@@ -57,21 +63,15 @@ afterEach(() => vi.restoreAllMocks());
 
 describe('TelegramService: texto', () => {
   it('avisa "Procesando…" y encola con el update_id como jobId', async () => {
-    const { servicio, cola, responder, conversacion } = crear();
+    const { servicio, cola, responder } = crear();
 
     await servicio.recibirTexto(CHAT, UPDATE, 'factura a Ana', responder);
 
     expect(responder).toHaveBeenCalledWith(MENSAJES_RECEPCION.procesando);
     expect(cola.encolar).toHaveBeenCalledWith(
-      {
-        tipo: 'texto',
-        chatId: CHAT,
-        texto: 'factura a Ana',
-        vista: null,
-      },
+      { tipo: 'texto', chatId: CHAT, texto: 'factura a Ana' },
       `tg-${UPDATE}`,
     );
-    expect(conversacion.vistaActual).not.toHaveBeenCalled();
   });
 
   it('el jobId nunca lleva el chatId', async () => {
@@ -101,46 +101,20 @@ describe('TelegramService: texto', () => {
     expect(cola.encolar).toHaveBeenCalled();
   });
 
-  it('"sí": captura el borrador y la versión mostrados, y no avisa "Procesando…"', async () => {
-    // Condición 1 de §15 y §18, mitad del handler: se toma vistaActual (borrador +
-    // versionMostrada), nunca version. La otra mitad está en conversacion.service.spec.ts.
-    const { servicio, cola, responder, conversacion } = crear();
-    conversacion.vistaActual.mockResolvedValueOnce(VISTA);
+  it.each(['sí', 'cancelar'])(
+    '"%s": se encola como texto, sin avisar "Procesando…" (no pasa por la IA)',
+    async (texto) => {
+      const { servicio, cola, responder } = crear();
 
-    await servicio.recibirTexto(CHAT, UPDATE, 'sí', responder);
+      await servicio.recibirTexto(CHAT, UPDATE, texto, responder);
 
-    expect(conversacion.vistaActual).toHaveBeenCalledWith(CHAT);
-    expect(cola.encolar).toHaveBeenCalledWith(
-      { tipo: 'texto', chatId: CHAT, texto: 'sí', vista: VISTA },
-      `tg-${UPDATE}`,
-    );
-    expect(responder).not.toHaveBeenCalled();
-  });
-
-  it('"cancelar": no lee la versión ni avisa "Procesando…"', async () => {
-    const { servicio, cola, responder, conversacion } = crear();
-
-    await servicio.recibirTexto(CHAT, UPDATE, 'cancelar', responder);
-
-    expect(conversacion.vistaActual).not.toHaveBeenCalled();
-    expect(responder).not.toHaveBeenCalled();
-    expect(cola.encolar).toHaveBeenCalledWith(
-      expect.objectContaining({ texto: 'cancelar', vista: null }),
-      `tg-${UPDATE}`,
-    );
-  });
-
-  it('si no puede leer lo que se mostró, encola el "sí" con vista null (no aprobará)', async () => {
-    const { servicio, cola, responder, conversacion } = crear();
-    conversacion.vistaActual.mockRejectedValueOnce(new Error('sin conexión'));
-
-    await servicio.recibirTexto(CHAT, UPDATE, 'sí', responder);
-
-    expect(cola.encolar).toHaveBeenCalledWith(
-      expect.objectContaining({ vista: null }),
-      `tg-${UPDATE}`,
-    );
-  });
+      expect(responder).not.toHaveBeenCalled();
+      expect(cola.encolar).toHaveBeenCalledWith(
+        { tipo: 'texto', chatId: CHAT, texto },
+        `tg-${UPDATE}`,
+      );
+    },
+  );
 
   it('Redis caído: avisa que no pudo recibir el mensaje', async () => {
     const { servicio, cola, responder } = crear();
@@ -176,8 +150,7 @@ describe('TelegramService: texto', () => {
   });
 
   it('los logs no llevan el chatId ni el texto', async () => {
-    const { servicio, cola, responder, conversacion } = crear();
-    conversacion.vistaActual.mockRejectedValueOnce(new Error('x'));
+    const { servicio, cola, responder } = crear();
     cola.encolar.mockRejectedValue(new Error(`falló con ${CHAT}`));
     responder.mockRejectedValueOnce(new Error('Bad Gateway'));
 
@@ -189,6 +162,156 @@ describe('TelegramService: texto', () => {
       expect(linea).not.toContain(String(CHAT));
       expect(linea).not.toContain('Ana');
     }
+  });
+});
+
+describe('autorización (por usuario y solo en chats privados)', () => {
+  const permitidos = new Set([CHAT]);
+
+  it.each([
+    ['usuario autorizado en chat privado', 'private', CHAT, true],
+    ['usuario no autorizado en chat privado', 'private', 5555, false],
+    ['usuario autorizado en un grupo', 'group', CHAT, false],
+    ['usuario autorizado en un supergrupo', 'supergroup', CHAT, false],
+    ['usuario autorizado en un canal', 'channel', CHAT, false],
+    [
+      'sin usuario (p. ej. publicación de un canal)',
+      'private',
+      undefined,
+      false,
+    ],
+    ['sin chat', undefined, CHAT, false],
+  ] as const)('%s → %s', (_caso, tipoChat, usuarioId, esperado) => {
+    expect(autorizado(tipoChat, usuarioId, permitidos)).toBe(esperado);
+  });
+});
+
+describe('TelegramService: botón "✅ Aprobar"', () => {
+  it('los datos del botón van y vuelven, y caben en los 64 bytes de la Bot API', () => {
+    const datos = datosBotonAprobar(VISTA);
+
+    expect(datos).toBe(`a:${VISTA.borradorId}:1`);
+    expect(leerBotonAprobar(datos)).toEqual(VISTA);
+    const maximo = datosBotonAprobar({ ...VISTA, version: 999_999 });
+    expect(Buffer.byteLength(maximo, 'utf8')).toBeLessThanOrEqual(64);
+  });
+
+  it.each([
+    ['otro prefijo', `n:${VISTA.borradorId}:1`],
+    ['id que no es uuid', 'a:b1:1'],
+    ['versión 0', `a:${VISTA.borradorId}:0`],
+    ['versión con letras', `a:${VISTA.borradorId}:1x`],
+    ['versión de 7 dígitos', `a:${VISTA.borradorId}:1000000`],
+    ['vacío', ''],
+  ])('rechaza datos alterados (%s)', (_caso, datos) => {
+    expect(leerBotonAprobar(datos)).toBeNull();
+  });
+
+  it('pulsado: responde enseguida al callback y encola "aprobar" con el mensaje del botón', async () => {
+    const { servicio, cola, responder } = crear();
+    const responderCallback = vi.fn().mockResolvedValue(true);
+
+    await servicio.recibirBoton(
+      CHAT,
+      UPDATE,
+      datosBotonAprobar(VISTA),
+      77,
+      responderCallback,
+      responder,
+    );
+
+    expect(responderCallback).toHaveBeenCalledWith(
+      MENSAJES_RECEPCION.procesandoBoton,
+    );
+    expect(cola.encolar).toHaveBeenCalledWith(
+      { tipo: 'aprobar', chatId: CHAT, ...VISTA, messageId: 77 },
+      `tg-${UPDATE}`,
+    );
+    expect(responderCallback.mock.invocationCallOrder[0]).toBeLessThan(
+      cola.encolar.mock.invocationCallOrder[0],
+    );
+  });
+
+  it.each([
+    ['datos alterados', 'a:b1:1', 77],
+    [
+      'sin mensaje (botón de un mensaje que ya no existe)',
+      `a:${VISTA.borradorId}:1`,
+      undefined,
+    ],
+  ])(
+    '%s: responde al callback y no encola',
+    async (_caso, datos, messageId) => {
+      const { servicio, cola, responder } = crear();
+      const responderCallback = vi.fn().mockResolvedValue(true);
+
+      await servicio.recibirBoton(
+        CHAT,
+        UPDATE,
+        datos,
+        messageId,
+        responderCallback,
+        responder,
+      );
+
+      expect(responderCallback).toHaveBeenCalledWith(
+        MENSAJES_RECEPCION.botonInvalido,
+      );
+      expect(cola.encolar).not.toHaveBeenCalled();
+    },
+  );
+
+  it('si el encolado falla, igual respondió al callback y avisa en el chat', async () => {
+    const { servicio, cola, responder } = crear();
+    const responderCallback = vi.fn().mockResolvedValue(true);
+    cola.encolar.mockRejectedValueOnce(new Error('Redis caído'));
+
+    await servicio.recibirBoton(
+      CHAT,
+      UPDATE,
+      datosBotonAprobar(VISTA),
+      77,
+      responderCallback,
+      responder,
+    );
+
+    expect(responderCallback).toHaveBeenCalled();
+    expect(responder).toHaveBeenCalledWith(MENSAJES_RECEPCION.redisCaido);
+  });
+
+  it('enviar con botón: el mensaje lleva "✅ Aprobar" con los datos del borrador', async () => {
+    const { servicio } = crear();
+    const api = (
+      servicio as unknown as { bot: { api: Record<string, unknown> } }
+    ).bot.api;
+    const sendMessage = vi.fn().mockResolvedValue({ message_id: 1 });
+    api.sendMessage = sendMessage;
+
+    await servicio.enviar(CHAT, 'Resumen', VISTA);
+    await servicio.enviar(CHAT, 'Sin botón', null);
+
+    const markup = sendMessage.mock.calls[0][2].reply_markup as {
+      inline_keyboard: { text: string; callback_data: string }[][];
+    };
+    expect(markup.inline_keyboard).toEqual([
+      [{ text: '✅ Aprobar', callback_data: datosBotonAprobar(VISTA) }],
+    ]);
+    expect(sendMessage.mock.calls[1][2]).toBeUndefined();
+  });
+
+  it('quitarBoton deja el mensaje sin teclado', async () => {
+    const { servicio } = crear();
+    const api = (
+      servicio as unknown as { bot: { api: Record<string, unknown> } }
+    ).bot.api;
+    const editar = vi.fn().mockResolvedValue(true);
+    api.editMessageReplyMarkup = editar;
+
+    await servicio.quitarBoton(CHAT, 77);
+
+    expect(editar).toHaveBeenCalledWith(CHAT, 77, {
+      reply_markup: { inline_keyboard: [] },
+    });
   });
 });
 

@@ -11,15 +11,11 @@ import { InterpreteTextoService } from './interprete-texto.service.js';
 
 // Admite signos finales: Whisper transcribe "Cancelar." (4.4).
 const CANCELAR = /^\s*cancelar\s*[.!]*\s*$/i;
-// Aprobar es la acción más delicada: se reconoce con código, nunca con la IA. Solo aprueba un
-// mensaje que sea únicamente una de estas palabras ("sí, pero cambia el NIT" es una corrección).
+// "sí" y sus variantes ya no aprueban (decisión 1 de la 4.4): solo se aprueba con el botón, que
+// lleva la versión exacta del mensaje. Se reconocen para responder con el resumen y el botón, sin
+// pasar el mensaje a la IA ("sí, pero cambia el NIT" sí es una corrección).
 const APROBAR =
   /^\s*(s[ií]|ok|dale|listo|apruebo|aprobado|aprobar|confirmo|confirmar)\s*[.!]*\s*$/i;
-
-/** "sí" y sus variantes: el handler captura la versión que el usuario tenía en pantalla. */
-export function esAprobacion(texto: string): boolean {
-  return APROBAR.test(texto);
-}
 
 /** "sí" o "cancelar": no pasan por la IA, así que no hace falta avisar "Procesando…". */
 export function esComando(texto: string): boolean {
@@ -27,9 +23,8 @@ export function esComando(texto: string): boolean {
 }
 
 /**
- * Lo que el usuario tenía en pantalla al escribir un "sí": qué borrador y en qué versión.
- * Con solo la versión, un "sí" podía aprobar otro borrador en la misma versión (p. ej. tras
- * "cancelar" y una factura nueva en cola).
+ * Qué borrador y en qué versión: lo que lleva el botón "✅ Aprobar" del resumen que el usuario tiene
+ * en pantalla. Con solo la versión, se podría aprobar otro borrador en la misma versión.
  */
 export interface VistaBorrador {
   borradorId: string;
@@ -40,19 +35,23 @@ export interface RespuestaConversacion {
   texto: string;
   /**
    * El texto lleva el resumen de esta versión del borrador. Quien lo envía llama a
-   * `marcarMostrada` solo cuando el canal confirma el envío.
+   * `marcarMostrada` solo cuando el canal confirma el envío, y le pone el botón "✅ Aprobar" si es
+   * aprobable.
    */
-  mostrar?: VistaBorrador;
+  mostrar?: VistaBorrador & { aprobable: boolean };
 }
+
+/** Qué decirle al usuario debajo del resumen. */
+type AvisoResumen = 'ninguno' | 'usarBoton' | 'noVigente';
 
 /**
  * Lleva la conversación de cada chat: crea el borrador con el primer mensaje, lo corrige o
  * completa con los siguientes, y termina cuando se aprueba o se cancela.
  * No depende del canal: recibe un id de chat y un texto, devuelve el texto de respuesta.
  *
- * Cada escritura de `datos` sube `version`. Un "sí" solo aprueba la versión que el usuario vio:
- * la que el canal confirmó haber mostrado (`versionMostrada`) y que el usuario tenía en pantalla
- * al escribir (`vista`, que también fija el borrador). Ver docs/planes/fase-4.3-cola.md §3 y §18.
+ * Cada escritura de `datos` sube `version`. Solo se aprueba con el botón, y solo la versión que el
+ * usuario vio: la que el canal confirmó haber mostrado (`versionMostrada`) y la que lleva el botón
+ * pulsado, del mismo borrador. Ver docs/planes/fase-4.3-cola.md §3 y §18, y 4.4 §3.
  */
 @Injectable()
 export class ConversacionService {
@@ -62,17 +61,6 @@ export class ConversacionService {
     private readonly prisma: PrismaService,
     private readonly interprete: InterpreteTextoService,
   ) {}
-
-  /**
-   * Borrador PENDIENTE y versión que el usuario tiene en pantalla, o null si no hay borrador o
-   * nunca se mostró. La versión sale de `versionMostrada`, nunca de `version`: `version` puede ir
-   * por delante con una corrección guardada que el usuario todavía no recibió.
-   */
-  async vistaActual(chatId: number): Promise<VistaBorrador | null> {
-    const pendiente = await this.buscarPendiente(chatId);
-    if (!pendiente || pendiente.versionMostrada === null) return null;
-    return { borradorId: pendiente.id, version: pendiente.versionMostrada };
-  }
 
   /**
    * Marca la versión como mostrada, solo si el borrador sigue en esa versión.
@@ -85,14 +73,9 @@ export class ConversacionService {
     });
   }
 
-  /**
-   * @param vista borrador y versión que el usuario tenía en pantalla cuando escribió el mensaje
-   *   (`vistaActual` leída al recibirlo). Solo se usa para aprobar.
-   */
   async responder(
     chatId: number,
     texto: string,
-    vista: VistaBorrador | null,
   ): Promise<RespuestaConversacion> {
     const pendiente = await this.buscarPendiente(chatId);
 
@@ -109,28 +92,40 @@ export class ConversacionService {
 
     if (APROBAR.test(texto)) {
       if (!pendiente) return { texto: 'No hay ninguna factura en curso.' };
-      return this.aprobar(pendiente, vista);
+      // Un "sí" (escrito o dictado) no aprueba: se reenvía el resumen vigente con su botón.
+      return this.conResumen(pendiente, 'usarBoton');
     }
 
     const fila = pendiente
       ? await this.corregir(pendiente, texto)
       : await this.crear(chatId, texto);
-    return this.conResumen(fila, false);
+    return this.conResumen(fila, 'ninguno');
   }
 
-  private async aprobar(
-    pendiente: Borrador,
-    vista: VistaBorrador | null,
+  /**
+   * Aprueba con el botón "✅ Aprobar" pulsado: solo si es el borrador PENDIENTE del chat y
+   * `version == versionMostrada ==` la versión del botón. Si no, reenvía el resumen vigente.
+   */
+  async aprobar(
+    chatId: number,
+    vista: VistaBorrador,
   ): Promise<RespuestaConversacion> {
+    const pendiente = await this.buscarPendiente(chatId);
+    if (!pendiente) {
+      return {
+        texto:
+          'Ese resumen ya no está vigente: no hay ninguna factura en curso.',
+      };
+    }
     const v = pendiente.version;
-    // Las condiciones (§3 y §18): lo guardado es lo que se mostró, y lo mostrado es lo que el
-    // usuario tenía en pantalla al escribir "sí": el mismo borrador y la misma versión.
+    // Lo guardado es lo que se mostró, y lo mostrado es lo que llevaba el botón: el mismo
+    // borrador y la misma versión (§3 y §18 de la 4.3).
     if (
+      pendiente.id !== vista.borradorId ||
       pendiente.versionMostrada !== v ||
-      vista?.version !== v ||
-      vista.borradorId !== pendiente.id
+      vista.version !== v
     ) {
-      return this.conResumen(pendiente, true);
+      return this.conResumen(pendiente, 'noVigente');
     }
 
     const actual = datosDe(pendiente);
@@ -151,7 +146,7 @@ export class ConversacionService {
       this.logger.warn('Aprobación descartada: el borrador cambió al aprobar');
       const ahora = await this.buscarPendiente(pendiente.chatId);
       return ahora
-        ? this.conResumen(ahora, true)
+        ? this.conResumen(ahora, 'noVigente')
         : { texto: 'No hay ninguna factura en curso.' };
     }
     return {
@@ -159,23 +154,27 @@ export class ConversacionService {
     };
   }
 
-  /**
-   * Resumen del borrador y qué hacer después.
-   * @param reenvio el "sí" no coincidió con lo mostrado: se pide confirmar otra vez.
-   */
-  private conResumen(fila: Borrador, reenvio: boolean): RespuestaConversacion {
+  /** Resumen del borrador y qué hacer después; el botón va solo si es aprobable. */
+  private conResumen(
+    fila: Borrador,
+    aviso: AvisoResumen,
+  ): RespuestaConversacion {
     const borrador = datosDe(fila);
-    let siguiente =
-      '👉 Responde "sí" para aprobar, escribe una corrección, o "cancelar".';
-    if (motivoNoAprobable(borrador)) {
+    const aprobable = motivoNoAprobable(borrador) === null;
+    let siguiente = '👉 Toca ✅ Aprobar, escribe una corrección, o "cancelar".';
+    if (!aprobable) {
       siguiente =
         '✏️ Escribe los datos que faltan o una corrección, o "cancelar".';
-    } else if (reenvio) {
-      siguiente = '👀 Revisa este resumen y responde "sí" otra vez.';
+    } else if (aviso === 'usarBoton') {
+      siguiente = '👉 Para aprobar, toca ✅ Aprobar en este mensaje.';
     }
+    const encabezado =
+      aviso === 'noVigente'
+        ? 'Ese resumen ya no está vigente. Este es el actual:\n\n'
+        : '';
     return {
-      texto: `${resumenBorrador(borrador)}\n\n${siguiente}`,
-      mostrar: { borradorId: fila.id, version: fila.version },
+      texto: `${encabezado}${resumenBorrador(borrador)}\n\n${siguiente}`,
+      mostrar: { borradorId: fila.id, version: fila.version, aprobable },
     };
   }
 

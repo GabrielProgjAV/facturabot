@@ -94,7 +94,6 @@ const trabajo: TrabajoMensaje = {
   tipo: 'texto',
   chatId: 4242, // chat ficticio
   texto: 'factura a Ana',
-  vista: null,
 };
 
 function crear() {

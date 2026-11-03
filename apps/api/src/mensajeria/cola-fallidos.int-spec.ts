@@ -14,7 +14,6 @@ const trabajo: TrabajoMensaje = {
   tipo: 'texto',
   chatId: 999000005, // chat ficticio
   texto: 'factura a Ferretería Ejemplo',
-  vista: null,
 };
 
 const conexiones: Redis[] = [];

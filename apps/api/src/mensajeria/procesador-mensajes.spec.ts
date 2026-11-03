@@ -39,8 +39,10 @@ function crearDeps() {
   const deps = {
     responder: vi.fn().mockResolvedValue({
       texto: 'Resumen',
-      mostrar: { borradorId: 'b1', version: 2 },
+      mostrar: { borradorId: 'b1', version: 2, aprobable: true },
     }),
+    aprobar: vi.fn().mockResolvedValue({ texto: '✅ Factura aprobada.' }),
+    quitarBoton: vi.fn().mockResolvedValue(undefined),
     marcarMostrada: vi.fn().mockResolvedValue(undefined),
     descargarVoz: vi.fn().mockResolvedValue(NOTA),
     transcribir: vi.fn().mockResolvedValue('vinilo 50 mil'),
@@ -55,27 +57,133 @@ function crearDeps() {
   return { deps, logs };
 }
 
-/** Borrador y versión que veía el usuario (uuid ficticio). */
+/** Borrador y versión del botón pulsado (uuid ficticio). */
 const VISTA = {
   borradorId: '01900000-0000-7000-8000-000000000001',
   version: 1,
 };
-const texto = (vista: typeof VISTA | null = null) => ({
-  tipo: 'texto',
-  chatId: CHAT,
-  texto: TEXTO,
-  vista,
-});
+const texto = () => ({ tipo: 'texto', chatId: CHAT, texto: TEXTO });
+const aprobar = { tipo: 'aprobar', chatId: CHAT, ...VISTA, messageId: 77 };
+
+/** El mensaje que se envió al chat, sin mirar el botón. */
+function expectEnviado(
+  deps: ReturnType<typeof crearDeps>['deps'],
+  esperado: string,
+) {
+  expect(
+    deps.enviar.mock.calls.map((c: unknown[]) => [c[0], c[1]]),
+  ).toContainEqual([CHAT, esperado]);
+}
 const voz = { tipo: 'voz', chatId: CHAT, fileId: 'archivo-1' };
+
+describe('procesarMensaje: botón "✅ Aprobar"', () => {
+  it('un resumen aprobable se envía con el botón de su borrador y versión', async () => {
+    const { deps } = crearDeps();
+
+    await procesarMensaje(texto(), 'j1', deps);
+
+    expect(deps.enviar).toHaveBeenCalledWith(CHAT, 'Resumen', {
+      borradorId: 'b1',
+      version: 2,
+    });
+  });
+
+  it('un resumen no aprobable se envía sin botón, pero se marca como mostrado', async () => {
+    const { deps } = crearDeps();
+    deps.responder.mockResolvedValueOnce({
+      texto: 'Falta el NIT',
+      mostrar: { borradorId: 'b1', version: 2, aprobable: false },
+    });
+
+    await procesarMensaje(texto(), 'j1', deps);
+
+    expect(deps.enviar).toHaveBeenCalledWith(CHAT, 'Falta el NIT', null);
+    expect(deps.marcarMostrada).toHaveBeenCalledWith('b1', 2);
+  });
+
+  it('trabajo "aprobar": aprueba con el borrador y la versión del botón y le quita el botón', async () => {
+    const { deps } = crearDeps();
+
+    await procesarMensaje(aprobar, 'j9', deps);
+
+    expect(deps.aprobar).toHaveBeenCalledWith(CHAT, VISTA);
+    expect(deps.quitarBoton).toHaveBeenCalledWith(CHAT, 77);
+    expect(deps.enviar).toHaveBeenCalledWith(
+      CHAT,
+      '✅ Factura aprobada.',
+      null,
+    );
+    expect(deps.quitarBoton.mock.invocationCallOrder[0]).toBeLessThan(
+      deps.enviar.mock.invocationCallOrder[0],
+    );
+    expect(deps.responder).not.toHaveBeenCalled();
+    expect(deps.marcarMostrada).not.toHaveBeenCalled();
+  });
+
+  it('botón que ya no está vigente: reenvía el resumen actual con un botón nuevo y lo marca', async () => {
+    const { deps } = crearDeps();
+    deps.aprobar.mockResolvedValueOnce({
+      texto: 'Ese resumen ya no está vigente…',
+      mostrar: { borradorId: 'b1', version: 3, aprobable: true },
+    });
+
+    await procesarMensaje(aprobar, 'j9', deps);
+
+    expect(deps.quitarBoton).toHaveBeenCalledWith(CHAT, 77);
+    expect(deps.enviar).toHaveBeenCalledWith(
+      CHAT,
+      'Ese resumen ya no está vigente…',
+      {
+        borradorId: 'b1',
+        version: 3,
+      },
+    );
+    expect(deps.marcarMostrada).toHaveBeenCalledWith('b1', 3);
+  });
+
+  it('si no se puede quitar el botón viejo, solo lo registra y responde igual', async () => {
+    const { deps } = crearDeps();
+    deps.quitarBoton.mockRejectedValueOnce(
+      new Error('message is not modified'),
+    );
+
+    await procesarMensaje(aprobar, 'j9', deps);
+
+    expect(deps.logger.warn).toHaveBeenCalled();
+    expectEnviado(deps, '✅ Factura aprobada.');
+  });
+
+  it('si la aprobación falla (p. ej. base caída), avisa que el borrador sigue igual', async () => {
+    const { deps } = crearDeps();
+    deps.aprobar.mockRejectedValue(new Error('sin conexión'));
+
+    await procesarMensaje(aprobar, 'j9', deps);
+
+    expectEnviado(deps, MENSAJES_FALLA.aprobar);
+  });
+
+  it.each([
+    ['borradorId que no es uuid', { ...aprobar, borradorId: 'b1' }],
+    ['versión 0', { ...aprobar, version: 0 }],
+    ['sin messageId', { tipo: 'aprobar', chatId: CHAT, ...VISTA }],
+  ])('trabajo "aprobar" inválido (%s): no se procesa', async (_caso, datos) => {
+    const { deps } = crearDeps();
+
+    await procesarMensaje(datos, 'j9', deps);
+
+    expect(deps.aprobar).not.toHaveBeenCalled();
+    expect(deps.enviar).not.toHaveBeenCalled();
+  });
+});
 
 describe('procesarMensaje: texto', () => {
   it('llama a la conversación, envía la respuesta y luego marca la versión mostrada', async () => {
     const { deps } = crearDeps();
 
-    await procesarMensaje(texto(VISTA), 'j1', deps);
+    await procesarMensaje(texto(), 'j1', deps);
 
-    expect(deps.responder).toHaveBeenCalledWith(CHAT, TEXTO, VISTA);
-    expect(deps.enviar).toHaveBeenCalledWith(CHAT, 'Resumen');
+    expect(deps.responder).toHaveBeenCalledWith(CHAT, TEXTO);
+    expectEnviado(deps, 'Resumen');
     expect(deps.marcarMostrada).toHaveBeenCalledWith('b1', 2);
     expect(deps.enviar.mock.invocationCallOrder[0]).toBeLessThan(
       deps.marcarMostrada.mock.invocationCallOrder[0],
@@ -86,7 +194,7 @@ describe('procesarMensaje: texto', () => {
     const { deps } = crearDeps();
     deps.responder.mockResolvedValueOnce({ texto: '✅ Factura aprobada.' });
 
-    await procesarMensaje(texto(VISTA), 'j1', deps);
+    await procesarMensaje(texto(), 'j1', deps);
 
     expect(deps.marcarMostrada).not.toHaveBeenCalled();
   });
@@ -99,7 +207,7 @@ describe('procesarMensaje: texto', () => {
 
     expect(deps.responder).toHaveBeenCalledTimes(2);
     expect(deps.esperar).toHaveBeenCalledWith(ESPERA_REINTENTO_MS);
-    expect(deps.enviar).toHaveBeenCalledWith(CHAT, MENSAJES_FALLA.texto);
+    expectEnviado(deps, MENSAJES_FALLA.texto);
   });
 
   it('Ollama vuelve en el reintento: responde normal', async () => {
@@ -108,7 +216,7 @@ describe('procesarMensaje: texto', () => {
 
     await procesarMensaje(texto(), 'j1', deps);
 
-    expect(deps.enviar).toHaveBeenCalledWith(CHAT, 'Resumen');
+    expectEnviado(deps, 'Resumen');
     expect(deps.marcarMostrada).toHaveBeenCalledWith('b1', 2);
   });
 
@@ -120,7 +228,7 @@ describe('procesarMensaje: texto', () => {
 
     expect(deps.responder).toHaveBeenCalledTimes(1);
     expect(deps.esperar).not.toHaveBeenCalled();
-    expect(deps.enviar).toHaveBeenCalledWith(CHAT, MENSAJES_FALLA.texto);
+    expectEnviado(deps, MENSAJES_FALLA.texto);
   });
 
   it('otro error (p. ej. JSON inválido de la IA): no reintenta y avisa', async () => {
@@ -130,7 +238,7 @@ describe('procesarMensaje: texto', () => {
     await procesarMensaje(texto(), 'j1', deps);
 
     expect(deps.responder).toHaveBeenCalledTimes(1);
-    expect(deps.enviar).toHaveBeenCalledWith(CHAT, MENSAJES_FALLA.texto);
+    expectEnviado(deps, MENSAJES_FALLA.texto);
   });
 });
 
@@ -143,11 +251,8 @@ describe('procesarMensaje: voz', () => {
     expect(deps.descargarVoz).toHaveBeenCalledWith('archivo-1');
     expect(deps.transcribir).toHaveBeenCalledWith(NOTA);
     // Sin vista: un "sí" dictado no aprueba (decisión 1 de la 4.4).
-    expect(deps.responder).toHaveBeenCalledWith(CHAT, 'vinilo 50 mil', null);
-    expect(deps.enviar).toHaveBeenCalledWith(
-      CHAT,
-      '🎤 Entendí: "vinilo 50 mil"\n\nResumen',
-    );
+    expect(deps.responder).toHaveBeenCalledWith(CHAT, 'vinilo 50 mil');
+    expectEnviado(deps, '🎤 Entendí: "vinilo 50 mil"\n\nResumen');
     expect(deps.marcarMostrada).toHaveBeenCalledWith('b1', 2);
   });
 
@@ -158,7 +263,7 @@ describe('procesarMensaje: voz', () => {
     await procesarMensaje(voz, 'j2', deps);
 
     expect(deps.transcribir).not.toHaveBeenCalled();
-    expect(deps.enviar).toHaveBeenCalledWith(CHAT, MENSAJES_FALLA.vozLarga);
+    expectEnviado(deps, MENSAJES_FALLA.vozLarga);
   });
 
   it('justo 120 s: se transcribe', async () => {
@@ -178,7 +283,7 @@ describe('procesarMensaje: voz', () => {
 
     expect(deps.descargarVoz).toHaveBeenCalledTimes(1);
     expect(deps.transcribir).not.toHaveBeenCalled();
-    expect(deps.enviar).toHaveBeenCalledWith(CHAT, MENSAJES_FALLA.voz);
+    expectEnviado(deps, MENSAJES_FALLA.voz);
   });
 
   it('transcripción de más de 1.000 caracteres: pide dividirla y no la pasa a la IA', async () => {
@@ -188,10 +293,7 @@ describe('procesarMensaje: voz', () => {
     await procesarMensaje(voz, 'j2', deps);
 
     expect(deps.responder).not.toHaveBeenCalled();
-    expect(deps.enviar).toHaveBeenCalledWith(
-      CHAT,
-      MENSAJES_FALLA.transcripcionLarga,
-    );
+    expectEnviado(deps, MENSAJES_FALLA.transcripcionLarga);
     expect(MENSAJES_FALLA.transcripcionLarga).toContain('1.000');
   });
 
@@ -210,7 +312,7 @@ describe('procesarMensaje: voz', () => {
 
     await procesarMensaje(voz, 'j2', deps);
 
-    expect(deps.enviar).toHaveBeenCalledWith(CHAT, MENSAJES_FALLA.texto);
+    expectEnviado(deps, MENSAJES_FALLA.texto);
   });
 
   it('Ollama caído después de transcribir: reintenta la conversación una vez', async () => {
@@ -221,10 +323,7 @@ describe('procesarMensaje: voz', () => {
 
     expect(deps.transcribir).toHaveBeenCalledTimes(1);
     expect(deps.responder).toHaveBeenCalledTimes(2);
-    expect(deps.enviar).toHaveBeenCalledWith(
-      CHAT,
-      '🎤 Entendí: "vinilo 50 mil"\n\nResumen',
-    );
+    expectEnviado(deps, '🎤 Entendí: "vinilo 50 mil"\n\nResumen');
   });
 
   it('transcripción vacía: avisa que no escuchó nada', async () => {
@@ -233,10 +332,7 @@ describe('procesarMensaje: voz', () => {
 
     await procesarMensaje(voz, 'j2', deps);
 
-    expect(deps.enviar).toHaveBeenCalledWith(
-      CHAT,
-      '🎤 No escuché nada en la nota.',
-    );
+    expectEnviado(deps, '🎤 No escuché nada en la nota.');
   });
 
   it('Whisper caído: reintenta una vez y avisa con el mensaje de voz', async () => {
@@ -246,7 +342,7 @@ describe('procesarMensaje: voz', () => {
     await procesarMensaje(voz, 'j2', deps);
 
     expect(deps.transcribir).toHaveBeenCalledTimes(2);
-    expect(deps.enviar).toHaveBeenCalledWith(CHAT, MENSAJES_FALLA.voz);
+    expectEnviado(deps, MENSAJES_FALLA.voz);
   });
 
   it('timeout de Whisper: no reintenta', async () => {
@@ -256,7 +352,7 @@ describe('procesarMensaje: voz', () => {
     await procesarMensaje(voz, 'j2', deps);
 
     expect(deps.transcribir).toHaveBeenCalledTimes(1);
-    expect(deps.enviar).toHaveBeenCalledWith(CHAT, MENSAJES_FALLA.voz);
+    expectEnviado(deps, MENSAJES_FALLA.voz);
   });
 
   it('falla de descarga: reintenta una vez (es una lectura)', async () => {
@@ -268,10 +364,7 @@ describe('procesarMensaje: voz', () => {
     await procesarMensaje(voz, 'j2', deps);
 
     expect(deps.descargarVoz).toHaveBeenCalledTimes(2);
-    expect(deps.enviar).toHaveBeenCalledWith(
-      CHAT,
-      '🎤 Entendí: "vinilo 50 mil"\n\nResumen',
-    );
+    expectEnviado(deps, '🎤 Entendí: "vinilo 50 mil"\n\nResumen');
   });
 
   it('timeout de descarga: no reintenta', async () => {
@@ -282,7 +375,7 @@ describe('procesarMensaje: voz', () => {
 
     expect(deps.descargarVoz).toHaveBeenCalledTimes(1);
     expect(deps.transcribir).not.toHaveBeenCalled();
-    expect(deps.enviar).toHaveBeenCalledWith(CHAT, MENSAJES_FALLA.voz);
+    expectEnviado(deps, MENSAJES_FALLA.voz);
   });
 
   it('nota demasiado pesada: no reintenta, no transcribe y lo dice claro', async () => {
@@ -293,7 +386,7 @@ describe('procesarMensaje: voz', () => {
 
     expect(deps.descargarVoz).toHaveBeenCalledTimes(1);
     expect(deps.transcribir).not.toHaveBeenCalled();
-    expect(deps.enviar).toHaveBeenCalledWith(CHAT, MENSAJES_FALLA.vozPesada);
+    expectEnviado(deps, MENSAJES_FALLA.vozPesada);
   });
 });
 
@@ -370,7 +463,7 @@ describe('avisarTrabajoFallido', () => {
 
     await avisarTrabajoFallido(texto(), 'j8', err, deps);
 
-    expect(deps.enviar).toHaveBeenCalledWith(CHAT, MENSAJES_FALLA.reinicio);
+    expectEnviado(deps, MENSAJES_FALLA.reinicio);
     expect(logs.some((l) => l.includes('reinicio'))).toBe(true);
   });
 

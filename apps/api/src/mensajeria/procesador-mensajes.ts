@@ -30,13 +30,15 @@ export const trabajoMensajeSchema = z.discriminatedUnion('tipo', [
     tipo: z.literal('texto'),
     chatId: z.number().int(),
     texto: z.string().min(1).max(LIMITE_TEXTO),
-    /** Borrador y versión mostrados al recibir un "sí"; null en los demás mensajes. */
-    vista: z
-      .object({
-        borradorId: z.uuid(),
-        version: z.number().int().positive(),
-      })
-      .nullable(),
+  }),
+  /** Botón "✅ Aprobar" pulsado: el borrador y la versión del mensaje que el usuario tenía. */
+  z.object({
+    tipo: z.literal('aprobar'),
+    chatId: z.number().int(),
+    borradorId: z.uuid(),
+    version: z.number().int().positive(),
+    /** Mensaje del botón pulsado: se le quita el botón para que no se pulse otra vez. */
+    messageId: z.number().int().positive(),
   }),
   z.object({
     tipo: z.literal('voz'),
@@ -53,6 +55,8 @@ export const MENSAJES_FALLA = {
   vozLarga: `La nota de voz es muy larga. Envía una de máximo ${DURACION_MAXIMA_VOZ_SEGUNDOS / 60} minutos.`,
   transcripcionLarga: `Entendí una nota de más de ${LIMITE_TEXTO.toLocaleString('es-CO')} caracteres. Divídela en notas más cortas o escríbela.`,
   texto: 'No pude procesar el mensaje. Tu borrador anterior sigue igual.',
+  aprobar:
+    'No pude aprobar la factura en este momento. Tu borrador sigue igual: intenta de nuevo en un rato.',
   reinicio: 'No alcancé a procesar tu último mensaje. Reenvíalo, por favor.',
   encoladoSinConfirmar:
     'No pude confirmar si recibí tu mensaje. Espera un momento: si en un minuto no te llega el resumen, reenvíalo.',
@@ -83,16 +87,22 @@ export class VozNoAdmitidaError extends Error {
 
 /** Lo que el procesador necesita del exterior. TelegramService lo arma al arrancar. */
 export interface DependenciasProcesador {
-  responder(
-    chatId: number,
-    texto: string,
-    vista: VistaBorrador | null,
-  ): Promise<RespuestaConversacion>;
+  responder(chatId: number, texto: string): Promise<RespuestaConversacion>;
+  aprobar(chatId: number, vista: VistaBorrador): Promise<RespuestaConversacion>;
   marcarMostrada(borradorId: string, version: number): Promise<void>;
   descargarVoz(fileId: string): Promise<Uint8Array<ArrayBuffer>>;
   transcribir(audio: Uint8Array<ArrayBuffer>): Promise<string>;
-  /** Termina sin error solo cuando el canal confirmó el mensaje. */
-  enviar(chatId: number, texto: string): Promise<void>;
+  /**
+   * Termina sin error solo cuando el canal confirmó el mensaje. Con `boton`, el mensaje lleva
+   * "✅ Aprobar" para ese borrador y esa versión.
+   */
+  enviar(
+    chatId: number,
+    texto: string,
+    boton: VistaBorrador | null,
+  ): Promise<void>;
+  /** Quita los botones de un mensaje ya enviado. */
+  quitarBoton(chatId: number, messageId: number): Promise<void>;
   /** Pausa antes del reintento; los tests la reemplazan para no esperar. */
   esperar(ms: number): Promise<void>;
   logger: Pick<LoggerService, 'log' | 'warn' | 'error'>;
@@ -122,15 +132,7 @@ export async function procesarMensaje(
 
   let respuesta: RespuestaConversacion;
   try {
-    respuesta =
-      trabajo.tipo === 'voz'
-        ? await procesarVoz(trabajo.chatId, trabajo.fileId, ctx)
-        : // Con ECONNREFUSED nada se aplicó: ni la IA respondió ni se escribió en la base.
-          await conReintento(
-            () => deps.responder(trabajo.chatId, trabajo.texto, trabajo.vista),
-            esConexionRechazada,
-            ctx,
-          );
+    respuesta = await procesar(trabajo, ctx);
   } catch (err) {
     deps.logger.error(
       `Trabajo ${jobId} (${trabajo.tipo}) falló en ${ctx.etapa}: ${describirError(err)}`,
@@ -138,8 +140,25 @@ export async function procesarMensaje(
     respuesta = { texto: mensajeDeFalla(err, trabajo.tipo, ctx.etapa) };
   }
 
+  if (trabajo.tipo === 'aprobar') {
+    // El botón pulsado ya no vale: o se aprobó, o se reenvía el resumen vigente con uno nuevo.
+    try {
+      await deps.quitarBoton(trabajo.chatId, trabajo.messageId);
+    } catch (err) {
+      // Si queda visible, pulsarlo otra vez no aprueba nada: la condición de versión lo impide.
+      deps.logger.warn(
+        `Trabajo ${jobId} (aprobar) falló en quitar el botón: ${describirError(err)}`,
+      );
+    }
+  }
+
+  const { mostrar } = respuesta;
+  const boton =
+    mostrar?.aprobable === true
+      ? { borradorId: mostrar.borradorId, version: mostrar.version }
+      : null;
   try {
-    await deps.enviar(trabajo.chatId, respuesta.texto);
+    await deps.enviar(trabajo.chatId, respuesta.texto, boton);
   } catch (err) {
     // Sin envío confirmado no se marca como mostrado: ese borrador no se puede aprobar (§3).
     deps.logger.error(
@@ -166,6 +185,34 @@ export async function procesarMensaje(
   );
 }
 
+/** Lo que hace cada tipo de trabajo. Con ECONNREFUSED nada se aplicó: se reintenta una vez. */
+function procesar(
+  trabajo: TrabajoMensaje,
+  ctx: { jobId: string; deps: DependenciasProcesador; etapa: Etapa },
+): Promise<RespuestaConversacion> {
+  const { deps } = ctx;
+  switch (trabajo.tipo) {
+    case 'voz':
+      return procesarVoz(trabajo.chatId, trabajo.fileId, ctx);
+    case 'texto':
+      return conReintento(
+        () => deps.responder(trabajo.chatId, trabajo.texto),
+        esConexionRechazada,
+        ctx,
+      );
+    case 'aprobar':
+      return conReintento(
+        () =>
+          deps.aprobar(trabajo.chatId, {
+            borradorId: trabajo.borradorId,
+            version: trabajo.version,
+          }),
+        esConexionRechazada,
+        ctx,
+      );
+  }
+}
+
 /** Qué decirle al usuario según el error y la etapa en que ocurrió. */
 function mensajeDeFalla(
   err: unknown,
@@ -180,6 +227,7 @@ function mensajeDeFalla(
   }
   // Una nota ya transcrita que falla en la conversación es un fallo de Ollama, no de la voz.
   if (tipo === 'voz' && etapa !== 'conversar') return MENSAJES_FALLA.voz;
+  if (tipo === 'aprobar') return MENSAJES_FALLA.aprobar;
   return MENSAJES_FALLA.texto;
 }
 
@@ -220,11 +268,11 @@ async function procesarVoz(
     return { texto: MENSAJES_FALLA.transcripcionLarga };
   }
 
-  // La transcripción sigue el mismo camino que un texto: crea o corrige el borrador. Sin vista:
-  // un "sí" dictado no aprueba (decisión 1 de la 4.4); reenvía el resumen vigente.
+  // La transcripción sigue el mismo camino que un texto: crea o corrige el borrador. Un "sí"
+  // dictado no aprueba (decisión 1 de la 4.4): reenvía el resumen vigente con su botón.
   ctx.etapa = 'conversar';
   const respuesta = await conReintento(
-    () => deps.responder(chatId, texto, null),
+    () => deps.responder(chatId, texto),
     esConexionRechazada,
     ctx,
   );
@@ -274,7 +322,7 @@ export async function avisarTrabajoFallido(
   const destino = z.object({ chatId: z.number().int() }).safeParse(datos);
   if (!destino.success) return;
   try {
-    await deps.enviar(destino.data.chatId, MENSAJES_FALLA.reinicio);
+    await deps.enviar(destino.data.chatId, MENSAJES_FALLA.reinicio, null);
   } catch (errEnvio) {
     deps.logger.error(
       `Trabajo ${jobId}: no se pudo avisar la falla: ${describirError(errEnvio)}`,
