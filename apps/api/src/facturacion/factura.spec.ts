@@ -137,6 +137,21 @@ describe('motivoNoAprobable', () => {
     expect(motivoNoAprobable(sinNit)).toContain('NIT o cédula');
   });
 
+  it('no se aprueba un total escrito de 0', () => {
+    expect(motivoNoAprobable({ ...completo, totalEscrito: 0 })).toContain(
+      'total de la factura',
+    );
+  });
+
+  it('no se aprueba si los ítems suman 0 y no hay total escrito', () => {
+    const enCero: BorradorFactura = {
+      ...completo,
+      items: [{ descripcion: 'muestra', valor: 0 }],
+      totalEscrito: null,
+    };
+    expect(motivoNoAprobable(enCero)).toContain('total de la factura');
+  });
+
   it('no se aprueba si la suma no cuadra', () => {
     expect(motivoNoAprobable({ ...completo, totalEscrito: 1 })).toContain(
       'no suman',

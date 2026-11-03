@@ -205,7 +205,7 @@ export class ConversacionService {
         : { texto: 'No hay ninguna factura en curso.' };
     }
     return {
-      texto: `✅ Factura aprobada.\n\n${resumenBorrador(actual)}\n\n(Se emitirá en Alegra cuando conectemos esa fase.)`,
+      texto: `${resumenBorrador(actual, '✅ Factura aprobada')}\n\n(Se emitirá en Alegra cuando conectemos esa fase.)`,
     };
   }
 
@@ -237,7 +237,7 @@ export class ConversacionService {
     if (cambio < desde) return null;
     if (ultimo.estado === 'APROBADO') {
       return {
-        texto: `✅ Tu factura quedó aprobada.\n\n${resumenBorrador(datosDe(ultimo))}`,
+        texto: resumenBorrador(datosDe(ultimo), '✅ Tu factura quedó aprobada'),
       };
     }
     if (ultimo.estado === 'CANCELADO') {

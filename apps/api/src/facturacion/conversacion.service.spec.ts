@@ -345,7 +345,9 @@ describe('ConversacionService', () => {
         },
       });
       expect(interprete.interpretar).not.toHaveBeenCalled();
-      expect(respuesta.texto).toContain('aprobada');
+      // El título cambia: ya no es un borrador (4.4 §8).
+      expect(respuesta.texto).toMatch(/^✅ Factura aprobada\nCliente: Ana/);
+      expect(respuesta.texto).not.toContain('Borrador de factura');
       expect(respuesta.mostrar).toBeUndefined();
     });
 

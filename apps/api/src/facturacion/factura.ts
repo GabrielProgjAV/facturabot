@@ -128,13 +128,16 @@ const pesos = new Intl.NumberFormat('es-CO', {
 });
 
 /** Mensaje para el usuario con lo entendido, lo que falta y los totales con IVA. */
-export function resumenBorrador(borrador: BorradorFactura): string {
+export function resumenBorrador(
+  borrador: BorradorFactura,
+  titulo = '🧾 Borrador de factura',
+): string {
   const { nombre } = borrador.cliente;
   const id = identificacionCliente(borrador);
   // Normalizada (sin puntos ni prefijo) si se entendió; si no, tal como se escribió.
   const numero = id?.numero ? `${id.numero}${id.dv ? `-${id.dv}` : ''}` : null;
   const lineas = [
-    '🧾 Borrador de factura',
+    titulo,
     `Cliente: ${nombre ?? '❓'} · NIT/CC: ${numero ?? borrador.cliente.identificacion ?? '❓'}`,
     ...borrador.items.map(
       (item) =>
