@@ -19,6 +19,11 @@ export const respuestaIaSchema = z.object({
 
 export type RespuestaIa = z.infer<typeof respuestaIaSchema>;
 
+/** Lo que importa de la respuesta de /api/chat de Ollama. */
+const sobreOllamaSchema = z.object({
+  message: z.object({ content: z.string() }),
+});
+
 // Todos los nombres, NIT y cédulas de los ejemplos de estas instrucciones son ficticios. El
 // texto no se cambia sin pasar por el set de evaluación (CLAUDE.md).
 const INSTRUCCIONES = `Eres el asistente de facturación de un comercio en Colombia.
@@ -130,7 +135,8 @@ export class InterpreteTextoService {
     if (!respuesta.ok) {
       throw new Error(`Ollama respondió ${respuesta.status}`);
     }
-    const cuerpo = (await respuesta.json()) as { message: { content: string } };
+    // Respuesta externa: se valida también el sobre, no solo el contenido (CLAUDE.md).
+    const cuerpo = sobreOllamaSchema.parse(await respuesta.json());
     const datos = respuestaIaSchema.parse(JSON.parse(cuerpo.message.content));
     const borrador = aBorrador(datos);
     borrador.totalEscrito = totalSegunMensaje(

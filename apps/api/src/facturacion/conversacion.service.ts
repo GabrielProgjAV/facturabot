@@ -303,10 +303,16 @@ export class ConversacionService {
   private async reemplazar(viejo: Borrador, texto: string): Promise<Borrador> {
     const borrador = await this.interprete.interpretar(texto, undefined);
     return this.prisma.$transaction(async (tx) => {
-      await tx.borrador.updateMany({
-        where: { id: viejo.id, estado: 'PENDIENTE' },
+      const { count } = await tx.borrador.updateMany({
+        where: { id: viejo.id, estado: 'PENDIENTE', version: viejo.version },
         data: { estado: 'CANCELADO' },
       });
+      // Otro proceso lo aprobó, canceló o corrigió mientras la IA interpretaba: el aviso "Lo dejé
+      // cancelado" sería falso.
+      // Al lanzar se deshace la transacción y el usuario recibe el aviso de falla.
+      if (count !== 1) {
+        throw new Error('El borrador viejo cambió antes de cancelarlo');
+      }
       return tx.borrador.create({
         data: { chatId: viejo.chatId, datos: aJson(borrador) },
       });

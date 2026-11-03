@@ -92,6 +92,8 @@ export interface ItemsQuitados {
  * Ítems que una corrección hizo desaparecer sin que el mensaje lo pidiera, o null si no hay.
  * La IA a veces "olvida" productos al devolver el borrador completo (CLAUDE.md: un ítem que
  * desaparece se pregunta, nunca se deja pasar en silencio).
+ * Límite conocido: solo mira la cantidad. Si la IA reemplaza un ítem por otro (caso f del set de
+ * evaluación), no se detecta; tampoco reconoce "saca" o "ya no va" como pedido de quitar.
  */
 export function itemsQuitadosSinPedir(
   antes: BorradorFactura,

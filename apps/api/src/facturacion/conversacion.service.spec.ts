@@ -474,7 +474,7 @@ describe('ConversacionService', () => {
         undefined,
       );
       expect(prisma.borrador.updateMany).toHaveBeenCalledWith({
-        where: { id: 'b1', estado: 'PENDIENTE' },
+        where: { id: 'b1', estado: 'PENDIENTE', version: 1 },
         data: { estado: 'CANCELADO' },
       });
       expect(prisma.borrador.create).toHaveBeenCalledWith({
@@ -520,6 +520,16 @@ describe('ConversacionService', () => {
       );
       expect(prisma.$transaction).not.toHaveBeenCalled();
       expect(prisma.borrador.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('si el viejo cambió antes de cancelarlo (count 0), falla sin crear el nuevo', async () => {
+      const { servicio, prisma } = crear(fila({ actualizadoEn: QUIETO }));
+      prisma.borrador.updateMany.mockResolvedValueOnce({ count: 0 });
+
+      await expect(servicio.responder(42, 'factura a Pedro')).rejects.toThrow(
+        'cambió antes de cancelarlo',
+      );
+      expect(prisma.borrador.create).not.toHaveBeenCalled();
     });
 
     it('"cancelar" y "sí" sobre un borrador quieto funcionan como siempre', async () => {
