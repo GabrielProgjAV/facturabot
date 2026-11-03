@@ -90,6 +90,11 @@ export interface DependenciasProcesador {
   responder(chatId: number, texto: string): Promise<RespuestaConversacion>;
   aprobar(chatId: number, vista: VistaBorrador): Promise<RespuestaConversacion>;
   marcarMostrada(borradorId: string, version: number): Promise<void>;
+  /** Estado real del borrador del chat tras un trabajo cortado; null si no hay nada que mostrar. */
+  estadoTrasFallo(
+    chatId: number,
+    desde: Date,
+  ): Promise<RespuestaConversacion | null>;
   descargarVoz(fileId: string): Promise<Uint8Array<ArrayBuffer>>;
   transcribir(audio: Uint8Array<ArrayBuffer>): Promise<string>;
   /**
@@ -308,12 +313,21 @@ async function conReintento<T>(
  * Responde al usuario cuando BullMQ marca un trabajo como fallido sin que el procesador lo
  * manejara. En la práctica es un reinicio a mitad del trabajo: con maxStalledCount 0, BullMQ
  * lo falla ("job stalled more than allowable limit") en lugar de repetirlo.
+ *
+ * "Reenvíalo" podía ser falso: la corrección o la aprobación pudieron guardarse antes del corte.
+ * Por eso se responde con el estado real del borrador, y solo si no hay nada, con el aviso
+ * genérico (4.4 §6).
+ * @param encoladoEn cuándo se encoló el trabajo (job.timestamp, en ms).
  */
 export async function avisarTrabajoFallido(
   datos: unknown,
   jobId: string,
+  encoladoEn: number,
   err: Error,
-  deps: Pick<DependenciasProcesador, 'enviar' | 'logger'>,
+  deps: Pick<
+    DependenciasProcesador,
+    'enviar' | 'logger' | 'estadoTrasFallo' | 'marcarMostrada'
+  >,
 ): Promise<void> {
   const interrumpido = err.message === 'job stalled more than allowable limit';
   deps.logger.error(
@@ -321,12 +335,39 @@ export async function avisarTrabajoFallido(
   );
   const destino = z.object({ chatId: z.number().int() }).safeParse(datos);
   if (!destino.success) return;
+  const { chatId } = destino.data;
+
+  let estado: RespuestaConversacion | null = null;
   try {
-    await deps.enviar(destino.data.chatId, MENSAJES_FALLA.reinicio, null);
+    estado = await deps.estadoTrasFallo(chatId, new Date(encoladoEn));
+  } catch (errEstado) {
+    deps.logger.warn(
+      `Trabajo ${jobId}: no se pudo leer el estado del borrador: ${describirError(errEstado)}`,
+    );
+  }
+  const mostrar = estado?.mostrar;
+  try {
+    await deps.enviar(
+      chatId,
+      estado?.texto ?? MENSAJES_FALLA.reinicio,
+      mostrar?.aprobable
+        ? { borradorId: mostrar.borradorId, version: mostrar.version }
+        : null,
+    );
   } catch (errEnvio) {
     deps.logger.error(
       `Trabajo ${jobId}: no se pudo avisar la falla: ${describirError(errEnvio)}`,
     );
+    return;
+  }
+  if (mostrar) {
+    try {
+      await deps.marcarMostrada(mostrar.borradorId, mostrar.version);
+    } catch (errMarcar) {
+      deps.logger.warn(
+        `Trabajo ${jobId}: falló en marcar: ${describirError(errMarcar)}`,
+      );
+    }
   }
 }
 

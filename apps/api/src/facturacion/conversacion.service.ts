@@ -154,6 +154,43 @@ export class ConversacionService {
     };
   }
 
+  /**
+   * Qué decirle al usuario cuando un trabajo se cortó (p. ej. un reinicio): el estado real de su
+   * borrador, porque la corrección o la aprobación pudieron guardarse antes del corte (4.4 §6).
+   * null si no hay nada que mostrar: el aviso genérico ("reenvíalo") es entonces lo correcto.
+   * @param desde cuándo se encoló el trabajo cortado.
+   */
+  async estadoTrasFallo(
+    chatId: number,
+    desde: Date,
+  ): Promise<RespuestaConversacion | null> {
+    const pendiente = await this.buscarPendiente(chatId);
+    if (pendiente) {
+      const resumen = this.conResumen(pendiente, 'ninguno');
+      return {
+        ...resumen,
+        texto: `No alcancé a terminar tu último mensaje. Este es tu borrador ahora; si era una corrección y no se ve aquí, reenvíala.\n\n${resumen.texto}`,
+      };
+    }
+    const ultimo = await this.prisma.borrador.findFirst({
+      where: { chatId: BigInt(chatId) },
+      orderBy: { actualizadoEn: 'desc' },
+    });
+    if (!ultimo || ultimo.actualizadoEn < desde) return null;
+    if (ultimo.estado === 'APROBADO') {
+      return {
+        texto: `✅ Tu factura quedó aprobada.\n\n${resumenBorrador(datosDe(ultimo))}`,
+      };
+    }
+    if (ultimo.estado === 'CANCELADO') {
+      return {
+        texto:
+          'Tu borrador quedó cancelado. Escribe una nueva factura cuando quieras.',
+      };
+    }
+    return null;
+  }
+
   /** Resumen del borrador y qué hacer después; el botón va solo si es aprobable. */
   private conResumen(
     fila: Borrador,

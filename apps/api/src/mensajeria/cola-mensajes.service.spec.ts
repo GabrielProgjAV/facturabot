@@ -247,11 +247,11 @@ describe('ColaMensajesService', () => {
     const err = new Error('job stalled more than allowable limit');
 
     h.registro.workers[0].manejadores.get('failed')?.(
-      { id: '8', data: trabajo },
+      { id: '8', data: trabajo, timestamp: 1_700_000_000_000 },
       err,
     );
 
-    expect(avisar).toHaveBeenCalledWith(trabajo, '8', err);
+    expect(avisar).toHaveBeenCalledWith(trabajo, '8', 1_700_000_000_000, err);
   });
 
   it('iniciar dos veces lanza un error', () => {

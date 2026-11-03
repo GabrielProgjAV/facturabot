@@ -148,6 +148,32 @@ describe('aprobación por versión contra PostgreSQL', () => {
     });
   });
 
+  it('estadoTrasFallo: con la aprobación guardada antes del corte dice que quedó aprobada', async () => {
+    const desde = new Date(Date.now() - 1000);
+    const fila = await crearPendiente(CHAT_A, 1, 1);
+    await servicio.aprobar(CHAT_A, { borradorId: fila.id, version: 1 });
+
+    const estado = await servicio.estadoTrasFallo(CHAT_A, desde);
+
+    expect(estado?.texto).toContain('✅ Tu factura quedó aprobada');
+    // Si el trabajo cortado es posterior a la aprobación, no hay nada que decir.
+    expect(
+      await servicio.estadoTrasFallo(CHAT_A, new Date(Date.now() + 60_000)),
+    ).toBeNull();
+  });
+
+  it('estadoTrasFallo: con un PENDIENTE devuelve su versión actual', async () => {
+    const fila = await crearPendiente(CHAT_A, 2, 1);
+
+    const estado = await servicio.estadoTrasFallo(CHAT_A, new Date());
+
+    expect(estado?.mostrar).toEqual({
+      borradorId: fila.id,
+      version: 2,
+      aprobable: true,
+    });
+  });
+
   it('marcarMostrada con una versión vieja no cambia nada', async () => {
     const fila = await crearPendiente(CHAT_A, 2, null);
 

@@ -319,7 +319,8 @@ export class TelegramService
     const deps = this.dependenciasProcesador();
     this.cola.iniciar(
       (datos, jobId) => procesarMensaje(datos, jobId, deps),
-      (datos, jobId, err) => avisarTrabajoFallido(datos, jobId, err, deps),
+      (datos, jobId, encoladoEn, err) =>
+        avisarTrabajoFallido(datos, jobId, encoladoEn, err, deps),
     );
     // start() no termina mientras el bot esté escuchando, por eso no se espera con await.
     this.bot
@@ -346,6 +347,8 @@ export class TelegramService
       aprobar: (chatId, vista) => this.conversacion.aprobar(chatId, vista),
       marcarMostrada: (borradorId, version) =>
         this.conversacion.marcarMostrada(borradorId, version),
+      estadoTrasFallo: (chatId, desde) =>
+        this.conversacion.estadoTrasFallo(chatId, desde),
       descargarVoz: (fileId) => this.descargarVoz(fileId),
       transcribir: (audio) => this.transcriptor.transcribir(audio, 'nota.ogg'),
       enviar: (chatId, texto, boton) => this.enviar(chatId, texto, boton),

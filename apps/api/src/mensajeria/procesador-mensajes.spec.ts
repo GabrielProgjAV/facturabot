@@ -44,6 +44,7 @@ function crearDeps() {
     aprobar: vi.fn().mockResolvedValue({ texto: '✅ Factura aprobada.' }),
     quitarBoton: vi.fn().mockResolvedValue(undefined),
     marcarMostrada: vi.fn().mockResolvedValue(undefined),
+    estadoTrasFallo: vi.fn().mockResolvedValue(null),
     descargarVoz: vi.fn().mockResolvedValue(NOTA),
     transcribir: vi.fn().mockResolvedValue('vinilo 50 mil'),
     enviar: vi.fn().mockResolvedValue(undefined),
@@ -452,26 +453,85 @@ describe('procesarMensaje: envío y validación', () => {
 });
 
 describe('avisarTrabajoFallido', () => {
-  it('reinicio a mitad del trabajo (stalled): pide reenviar el mensaje', async () => {
+  const ENCOLADO = Date.UTC(2026, 10, 2, 20, 0, 0);
+  const cortado = () =>
+    Object.assign(new Error('job stalled more than allowable limit'), {
+      name: 'UnrecoverableError',
+    });
+
+  it('sin nada que mostrar: pide reenviar el mensaje', async () => {
     const { deps, logs } = crearDeps();
-    const err = Object.assign(
-      new Error('job stalled more than allowable limit'),
-      {
-        name: 'UnrecoverableError',
-      },
+
+    await avisarTrabajoFallido(texto(), 'j8', ENCOLADO, cortado(), deps);
+
+    expect(deps.estadoTrasFallo).toHaveBeenCalledWith(CHAT, new Date(ENCOLADO));
+    expect(deps.enviar).toHaveBeenCalledWith(
+      CHAT,
+      MENSAJES_FALLA.reinicio,
+      null,
     );
-
-    await avisarTrabajoFallido(texto(), 'j8', err, deps);
-
-    expectEnviado(deps, MENSAJES_FALLA.reinicio);
     expect(logs.some((l) => l.includes('reinicio'))).toBe(true);
+  });
+
+  it('con un borrador pendiente: envía su resumen con el botón y lo marca', async () => {
+    const { deps } = crearDeps();
+    deps.estadoTrasFallo.mockResolvedValueOnce({
+      texto: 'No alcancé a terminar… Resumen',
+      mostrar: { borradorId: 'b1', version: 3, aprobable: true },
+    });
+
+    await avisarTrabajoFallido(texto(), 'j8', ENCOLADO, cortado(), deps);
+
+    expect(deps.enviar).toHaveBeenCalledWith(
+      CHAT,
+      'No alcancé a terminar… Resumen',
+      { borradorId: 'b1', version: 3 },
+    );
+    expect(deps.marcarMostrada).toHaveBeenCalledWith('b1', 3);
+  });
+
+  it('si la factura alcanzó a aprobarse: lo dice, sin pedir que reenvíe', async () => {
+    const { deps } = crearDeps();
+    deps.estadoTrasFallo.mockResolvedValueOnce({
+      texto: '✅ Tu factura quedó aprobada.',
+    });
+
+    await avisarTrabajoFallido(aprobar, 'j8', ENCOLADO, cortado(), deps);
+
+    expect(deps.enviar).toHaveBeenCalledWith(
+      CHAT,
+      '✅ Tu factura quedó aprobada.',
+      null,
+    );
+    expect(deps.marcarMostrada).not.toHaveBeenCalled();
+  });
+
+  it('si no se puede leer el estado, cae al aviso genérico', async () => {
+    const { deps } = crearDeps();
+    deps.estadoTrasFallo.mockRejectedValueOnce(new Error('sin conexión'));
+
+    await avisarTrabajoFallido(texto(), 'j8', ENCOLADO, cortado(), deps);
+
+    expect(deps.enviar).toHaveBeenCalledWith(
+      CHAT,
+      MENSAJES_FALLA.reinicio,
+      null,
+    );
+    expect(deps.logger.warn).toHaveBeenCalled();
   });
 
   it('sin un chatId válido no envía nada', async () => {
     const { deps } = crearDeps();
 
-    await avisarTrabajoFallido({ tipo: 'voz' }, 'j9', new Error('x'), deps);
+    await avisarTrabajoFallido(
+      { tipo: 'voz' },
+      'j9',
+      ENCOLADO,
+      new Error('x'),
+      deps,
+    );
 
+    expect(deps.estadoTrasFallo).not.toHaveBeenCalled();
     expect(deps.enviar).not.toHaveBeenCalled();
   });
 
@@ -480,7 +540,7 @@ describe('avisarTrabajoFallido', () => {
     deps.enviar.mockRejectedValue(new Error('Bad Gateway'));
 
     await expect(
-      avisarTrabajoFallido(voz, 'j10', new Error('x'), deps),
+      avisarTrabajoFallido(voz, 'j10', ENCOLADO, new Error('x'), deps),
     ).resolves.toBeUndefined();
     expect(deps.logger.error).toHaveBeenCalledTimes(2);
   });

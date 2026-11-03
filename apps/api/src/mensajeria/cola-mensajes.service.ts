@@ -33,6 +33,8 @@ export type ProcesarTrabajo = (datos: unknown, jobId: string) => Promise<void>;
 export type AvisarFallo = (
   datos: unknown,
   jobId: string,
+  /** Cuándo se encoló el trabajo (ms), para saber si el borrador cambió después. */
+  encoladoEn: number,
   err: Error,
 ) => Promise<void>;
 
@@ -104,7 +106,8 @@ export class ColaMensajesService implements BeforeApplicationShutdown {
       },
     );
     this.worker.on('failed', (job, err) => {
-      if (job) void avisarFallo(job.data, job.id ?? 'sin-id', err);
+      if (job)
+        void avisarFallo(job.data, job.id ?? 'sin-id', job.timestamp, err);
     });
     this.worker.on('error', (err) =>
       this.logger.error(`Worker de la cola: ${describirError(err)}`),

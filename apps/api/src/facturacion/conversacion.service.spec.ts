@@ -18,6 +18,7 @@ interface Fila {
   datos: unknown;
   version: number;
   versionMostrada: number | null;
+  actualizadoEn: Date;
 }
 
 function fila(cambios: Partial<Fila> = {}): Fila {
@@ -28,6 +29,7 @@ function fila(cambios: Partial<Fila> = {}): Fila {
     datos: borrador,
     version: 1,
     versionMostrada: 1,
+    actualizadoEn: new Date('2026-11-02T20:05:00Z'),
     ...cambios,
   };
 }
@@ -385,6 +387,71 @@ describe('ConversacionService', () => {
 
       expect(respuesta.texto).toContain('NIT o cédula');
       expect(prisma.borrador.updateMany).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('estadoTrasFallo (trabajo cortado por un reinicio)', () => {
+    const desde = new Date('2026-11-02T20:00:00Z');
+
+    it('con un PENDIENTE: devuelve su resumen vigente con el botón', async () => {
+      const { servicio } = crear(fila({ version: 3, versionMostrada: 2 }));
+
+      const estado = await servicio.estadoTrasFallo(42, desde);
+
+      expect(estado?.texto).toContain('No alcancé a terminar');
+      expect(estado?.texto).toContain('si era una corrección');
+      expect(estado?.mostrar).toEqual({
+        borradorId: 'b1',
+        version: 3,
+        aprobable: true,
+      });
+    });
+
+    it('sin PENDIENTE y el último quedó aprobado después de encolar: "quedó aprobada"', async () => {
+      const { servicio, prisma } = crear(null);
+      prisma.borrador.findFirst
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(fila({ estado: 'APROBADO' }));
+
+      const estado = await servicio.estadoTrasFallo(42, desde);
+
+      expect(estado?.texto).toContain('✅ Tu factura quedó aprobada');
+      expect(estado?.mostrar).toBeUndefined();
+      expect(prisma.borrador.findFirst).toHaveBeenLastCalledWith({
+        where: { chatId: 42n },
+        orderBy: { actualizadoEn: 'desc' },
+      });
+    });
+
+    it('sin PENDIENTE y el último quedó cancelado después de encolar: "quedó cancelado"', async () => {
+      const { servicio, prisma } = crear(null);
+      prisma.borrador.findFirst
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(fila({ estado: 'CANCELADO' }));
+
+      const estado = await servicio.estadoTrasFallo(42, desde);
+
+      expect(estado?.texto).toContain('quedó cancelado');
+    });
+
+    it('el último cambio es anterior al trabajo cortado: null (aviso genérico)', async () => {
+      const { servicio, prisma } = crear(null);
+      prisma.borrador.findFirst
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(
+          fila({
+            estado: 'APROBADO',
+            actualizadoEn: new Date('2026-11-02T19:00:00Z'),
+          }),
+        );
+
+      expect(await servicio.estadoTrasFallo(42, desde)).toBeNull();
+    });
+
+    it('sin ningún borrador en el chat: null', async () => {
+      const { servicio } = crear(null);
+
+      expect(await servicio.estadoTrasFallo(42, desde)).toBeNull();
     });
   });
 
