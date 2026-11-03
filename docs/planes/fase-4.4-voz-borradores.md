@@ -288,12 +288,17 @@ $192.000?". **Solo pregunta, no rechaza:** el borrador sigue siendo aprobable.
 
 Cada paso con su verificación (lint, Prettier, tsc, test y test:int), commit y reporte:
 
-1. `identificacion.ts` con sus tests (función pura, sin riesgo).
-2. Voz → conversación, con la duración real, la descarga por partes y el límite de 1.000.
-3. Autorización por usuario y en chats privados (§3.5); botón en línea y tipo de trabajo
-   `aprobar`; el "sí" según la decisión 1.
+1. ✅ `identificacion.ts` con sus tests (función pura, sin riesgo). `08921b6`.
+2. ✅ Voz → conversación, con la duración real, la descarga por partes y el límite de 1.000.
+   `66380af`.
+3. ✅ Autorización por usuario y en chats privados (§3.5); botón en línea y tipo de trabajo
+   `aprobar`; el "sí" según la decisión 1. `b167ab5`. Pendiente: `aprobado_por` (3b).
+   - 3b. Columna `aprobado_por` con su migración (SQL revisado por Gabriel antes de aplicarla).
 4. Estado real tras un reinicio.
-5. Set de evaluación y línea base del intérprete; detección de valores dudosos en código.
+   - 4b. Borradores pendientes viejos (decisión 7, §14.1).
+   - 4c. Latencia: timeout de Ollama a 240 s y "⏳ Sigo procesando…" a los 30 s (decisión 8, §14.2).
+5. Set de evaluación y línea base del intérprete (con la opción D de la decisión 8: en las
+   correcciones, la IA devuelve solo los cambios); detección de valores dudosos en código.
 6. Prueba manual en Telegram con un guion de datos ficticios.
 7. Subagentes `control-calidad` y `seguridad`, bitácora y README. Después: auditoría externa y PR de
    la fase 4 completa.
@@ -371,6 +376,10 @@ texto o nota de voz no se interpreta todavía. El bot pregunta, con dos botones:
 Recomiendo: **sí, con 2 horas**, el mensaje en espera en Redis por 15 minutos y el botón viejo que
 pide confirmar otra vez.
 
+**Aprobada por Gabriel el 2026-11-02 tal como se recomienda.** Se vio en la prueba del botón de ese
+día: el primer mensaje corrigió el borrador PENDIENTE del 2026-10-30 (con sus 9 productos) y el
+primer botón lo aprobó.
+
 ### 14.2 Decisión 8: latencia de Ollama
 
 **Medición del trabajo real del 2026-11-02** (nota reenviada de 87 s que corrigió un borrador de
@@ -405,7 +414,10 @@ según cuántos productos tenga el borrador, aunque la corrección sea de una so
 | F. Limitar los tokens de salida (`num_predict`) | Acota el peor caso | Puede cortar el JSON y fallar | Sí |
 | G. Modelo más pequeño | Más rápido | Peor calidad (el 3b falló f y g el 2026-10-15) | Sí; no recomendado |
 
-Recomiendo: **A y B en la 4.4** (baratos, sin tocar la IA); **D como candidato del set de evaluación**
+**Aprobada por Gabriel el 2026-11-02:** A (timeout de 240 s) y B ("⏳ Sigo procesando…" a los 30 s)
+ahora, en el paso 4c; D en el paso 5 con el set de evaluación; C no por ahora.
+
+Recomendación original: **A y B en la 4.4** (baratos, sin tocar la IA); **D como candidato del set de evaluación**
 del paso 5, que mida exactitud y tiempo; C solo si la memoria lo permite (hoy no).
 
 ## 13. Para el plan de la fase 5 (Alegra)
