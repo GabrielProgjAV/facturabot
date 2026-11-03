@@ -331,6 +331,83 @@ Cada paso con su verificación (lint, Prettier, tsc, test y test:int), commit y 
    (§7). Recomiendo: sí.
 5. **Umbral de valor dudoso:** $1.000 (§7). Recomiendo: sí.
 
+## 14. Decisiones nuevas para Gabriel (2026-11-02)
+
+### 14.1 Decisión 7: borradores pendientes viejos
+
+**Qué pasó:** el 2026-11-02 una nota de voz reenviada **corrigió** un borrador PENDIENTE del
+2026-10-30 (una prueba que quedó sin cancelar), en lugar de crear uno nuevo. El diseño hizo lo que
+dice (con un PENDIENTE, todo mensaje es una corrección), pero tres días después casi seguro el
+usuario quería una factura nueva.
+
+**Propuesta:** si el PENDIENTE lleva más de **2 horas sin cambios** (`actualizadoEn`), el siguiente
+texto o nota de voz no se interpreta todavía. El bot pregunta, con dos botones:
+
+> Tienes un borrador pendiente del 30 de oct. para Ferretería Ejemplo SAS. ¿Lo cancelo y empiezo
+> uno nuevo con tu mensaje, o lo corrijo?
+> [🆕 Empezar uno nuevo] [✏️ Corregir el pendiente]
+
+- **Por qué 2 horas:** las correcciones llegan en minutos mientras se arma una factura; un borrador
+  quieto por horas casi siempre se olvidó. Alternativas: 30 minutos (pregunta más, interrumpe una
+  factura lenta); "si es de otro día" (simple de explicar, pero a las 11:59 p. m. y a las 12:01 a. m.
+  serían 2 minutos); 24 horas (casi nunca pregunta, como el caso de hoy con 3 días sí habría
+  preguntado).
+- **El mensaje en espera** (texto o transcripción) se guarda en Redis con vencimiento de 15 minutos,
+  con clave por chat, y se borra al usarlo. Así el usuario no tiene que reenviarlo. Alternativa sin
+  guardar nada: pedir que lo reenvíe después de elegir (más simple, más fricción, y una nota de voz se
+  tendría que volver a grabar).
+- **Los botones:** `callback_data` = `n:<borradorId>` (nuevo) y `c:<borradorId>` (corregir), ~38
+  bytes. "Empezar uno nuevo" cancela el viejo con `updateMany` condicionado a PENDIENTE y procesa el
+  mensaje en espera como uno nuevo. "Corregir" lo procesa como corrección. Si el mensaje en espera ya
+  venció: "Pasó mucho tiempo; reenvía tu mensaje".
+- **El botón "✅ Aprobar" del resumen viejo:** si se pulsa cuando el borrador lleva más de 2 horas
+  quieto, no aprueba directo: reenvía el resumen vigente con un botón nuevo ("Este borrador es del 30
+  de oct.; revísalo y aprueba de nuevo"). Si el borrador ya se canceló al empezar uno nuevo, el botón
+  responde que ya no está vigente (§3.2). Alternativa: dejar que el botón viejo apruebe (el usuario sí
+  vio ese resumen), con el riesgo de aprobar por error algo de hace días.
+- Tests: corrección dentro de las 2 horas (sin pregunta), pasada las 2 horas (pregunta), cada botón,
+  mensaje en espera vencido, botón Aprobar viejo.
+
+Recomiendo: **sí, con 2 horas**, el mensaje en espera en Redis por 15 minutos y el botón viejo que
+pide confirmar otra vez.
+
+### 14.2 Decisión 8: latencia de Ollama
+
+**Medición del trabajo real del 2026-11-02** (nota reenviada de 87 s que corrigió un borrador de
+9 productos), desde los logs de la API y de Ollama:
+
+| Etapa | Tiempo |
+|---|---|
+| Descarga y lectura del Ogg | ~3 s |
+| Transcripción (Whisper) | 37,0 s |
+| Conversación (Ollama), de ella recarga de qwen ~9 s | 77 s |
+| **Total** | **116,4 s** (el timeout de Ollama es de 120 s) |
+
+**Medición controlada con datos ficticios** (qwen ya cargado, mismo intérprete), métricas de Ollama:
+
+| Caso | Total | Lee el prompt | Genera la respuesta |
+|---|---|---|---|
+| Crear con 9 productos | 27,8 s | 558 tokens en 1,6 s | 174 tokens en 26,2 s |
+| Corregir un borrador de 9 productos | 35,0 s | 803 tokens en 3,9 s | 191 tokens en 31,0 s |
+| Corregir un borrador de 1 producto | 11,2 s | 663 tokens en 1,7 s | 62 tokens en 9,5 s |
+
+**Conclusión:** casi todo el tiempo de Ollama se va en **generar** (~6 tokens/s con el 55 % del modelo en
+CPU), no en leer el contexto. En una corrección la IA devuelve el borrador **completo**, así que tarda
+según cuántos productos tenga el borrador, aunque la corrección sea de una sola palabra.
+
+| Opción | Efecto | Costo | ¿Evaluación? |
+|---|---|---|---|
+| A. Subir el timeout de Ollama de 120 a 240 s | Ningún trabajo real de hoy falla por tiempo | El usuario espera más; la cola (concurrencia 1) espera detrás | No |
+| B. "⏳ Sigo procesando…" si pasan 30 s sin respuesta | El usuario sabe que no se perdió | Un mensaje más; no acorta nada | No |
+| C. Mantener qwen cargado más tiempo (`keep_alive` de 30 min en vez de 5) | Se ahorran ~9–10 s de recarga | 5,2 GB de RAM ocupados más tiempo, en un equipo con la memoria justa (§8 del plan de la 4.3) | No |
+| D. En las correcciones, que la IA devuelva **solo los cambios** y el código los aplique | La salida baja de ~190 a ~30–60 tokens: de ~35 s a ~10 s con 9 productos | Cambia las instrucciones del intérprete y el código que aplica cambios (más lógica nuestra, y "la IA solo extrae" queda más claro) | **Sí**, set de evaluación (paso 5) |
+| E. Pasarle a la IA un borrador más compacto | Poco: leer el prompt es ~2–4 s | Cambia el formato del contexto | Sí |
+| F. Limitar los tokens de salida (`num_predict`) | Acota el peor caso | Puede cortar el JSON y fallar | Sí |
+| G. Modelo más pequeño | Más rápido | Peor calidad (el 3b falló f y g el 2026-10-15) | Sí; no recomendado |
+
+Recomiendo: **A y B en la 4.4** (baratos, sin tocar la IA); **D como candidato del set de evaluación**
+del paso 5, que mida exactitud y tiempo; C solo si la memoria lo permite (hoy no).
+
 ## 13. Para el plan de la fase 5 (Alegra)
 
 - **Autocompletar el cliente a partir del NIT o la cédula:** nombre y correo desde Alegra (sus
