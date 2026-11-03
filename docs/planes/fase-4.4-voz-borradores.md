@@ -30,6 +30,14 @@ Se hace, en este orden:
   voz hasta confirmarla (decisión 3); la advertencia de identificación por voz.
 - Después de Alegra: la opción D de §14.2 (la IA devuelve solo los cambios) y cualquier cambio a las
   instrucciones del intérprete; detección de ítems menores a $1.000 (decisión 5).
+- De las revisiones de cierre (subagentes `control-calidad` y `seguridad`, 2026-11-02):
+  - **Antes de Alegra (fase 6):** validar con Zod el JSON de `datos` leído de la BD (`datosDe`, hoy
+    un *cast*); detectar un ítem reemplazado (misma cantidad, otra descripción o valor: el caso f).
+  - **Antes de más usuarios:** límites de longitud en `respuestaIaSchema` (identificación, nombre,
+    descripciones, cantidad de ítems) y juntar los `\s*` seguidos de las regex de
+    `identificacion.ts` (posible ReDoS, solo con usuarios autorizados); "no quites" y quitar un ítem
+    distinto al pedido desactivan hoy la comprobación de ítems que desaparecen; sinónimos ("saca",
+    "ya no va"); el botón de un borrador quieto que ya no es aprobable muestra dos indicaciones.
 - No construir nada nuevo encima de `versionMostrada`. Lo ya hecho (duración del Ogg, descarga por
   partes) se queda.
 - Tarea B (`docs/prompts/pivote-formalizacion.md`) y el resto de la fase 3.5.
@@ -512,8 +520,7 @@ aprobación.
 
 ### Detalles que una sesión nueva necesita
 
-- **Node 24:** anteponer `C:\Users\gabri\AppData\Roaming\fnm\node-versions\v24.21.0\installation` al
-  PATH (CLAUDE.local.md). Para la API en el panel de Terminal, un script de PowerShell que haga eso,
+- **Node 24:** anteponer al PATH la instalación de Node 24 de fnm (ruta en CLAUDE.local.md). Para la API en el panel de Terminal, un script de PowerShell que haga eso,
   `Set-Location apps/api` y `pnpm run start:dev`.
 - **El worker arrancó** si Redis muestra una conexión `bull:bWVuc2FqZXM=` con `cmd=bzpopmin`
   (`redis-cli CLIENT LIST`).
@@ -523,8 +530,8 @@ aprobación.
   con `prisma migrate deploy`.
 - **Memoria:** `.wslconfig` con `memory=6GB` aplicado (Docker ve 5,8 GiB). La memoria comprometida
   de Windows está justa: si qwen no carga ("out-of-memory"), pedir cerrar programas. qwen se
-  descarga a los 5 minutos sin uso; la recarga cuesta ~10 s. Mediciones y scripts en
-  `C:\Users\gabri\Documents\facturabot-mediciones\` (fuera del repo).
+  descarga a los 5 minutos sin uso; la recarga cuesta ~10 s. Mediciones y scripts en una carpeta
+  local fuera del repo (ver CLAUDE.local.md).
 - **Latencia medida** (§14.2): la IA genera ~6 tokens/s; una corrección de un borrador de 9 productos
   tarda ~35 s con qwen cargado, y un trabajo real llegó a 116 s.
 - **Base local:** la prueba del botón del 2026-11-02 aprobó el borrador PENDIENTE del 2026-10-30

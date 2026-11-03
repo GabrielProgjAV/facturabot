@@ -78,7 +78,7 @@ explícita.
 
 | Pieza | Elección |
 |---|---|
-| Canal (desarrollo) | Telegram con **grammY**, *long polling* (sin ngrok). Solo chats en `TELEGRAM_CHATS_PERMITIDOS` |
+| Canal (desarrollo) | Telegram con **grammY**, *long polling* (sin ngrok). Solo usuarios (`ctx.from.id`) en `TELEGRAM_CHATS_PERMITIDOS` y solo en chats privados |
 | Canal (producción, fase 10) | WhatsApp Cloud API de Meta o Twilio, como otro adaptador. Nunca librerías no oficiales |
 | Emisión DIAN | Vía proveedor: Alegra → Siigo |
 | Backend | TypeScript + **NestJS 12** en `apps/api` (TS estricto, Vitest, Oxlint, Prettier) |
@@ -99,10 +99,13 @@ explícita.
   cada trabajo, esquema Zod de los datos que vienen de Redis).
   La interfaz formal `CanalMensajeria` se escribe cuando llegue el segundo canal.
 - `facturacion/`: `factura.ts` (funciones puras: pesos, faltantes, suma, IVA, resumen,
-  `motivoNoAprobable`), `interprete-texto.service.ts` (Ollama + esquema Zod), `conversacion.service.ts`
-  (borradores: crear, corregir, cancelar, aprobar con "sí" por regex solo si es el mismo borrador que
-  el usuario veía y `version == versionMostrada ==` la versión vista).
-- `voz/transcriptor.service.ts`: audio → texto con Whisper.
+  `motivoNoAprobable`, ítems que desaparecen), `identificacion.ts` (NIT y cédula: forma y DV),
+  `interprete-texto.service.ts` (Ollama + esquema Zod), `conversacion.service.ts` (borradores: crear,
+  corregir, cancelar y aprobar **solo con el botón "✅ Aprobar"** (`a:<borradorId>:<versión>`), si es
+  el mismo borrador y `version == versionMostrada ==` la del botón; "sí" ya no aprueba. Un PENDIENTE
+  quieto más de 2 h se cancela con el siguiente mensaje, y su botón pide confirmar otra vez).
+- `voz/`: `transcriptor.service.ts` (audio → texto con Whisper) y `duracion-ogg.ts` (duración real
+  de la nota).
 - `prisma/`: `PrismaService` global. Esquema en `apps/api/prisma/schema.prisma`.
 
 ## Decisiones de negocio
