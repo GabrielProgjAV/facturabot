@@ -39,6 +39,8 @@ export const trabajoMensajeSchema = z.discriminatedUnion('tipo', [
     version: z.number().int().positive(),
     /** Mensaje del botón pulsado: se le quita el botón para que no se pulse otra vez. */
     messageId: z.number().int().positive(),
+    /** Id de Telegram de quien pulsó el botón (dato personal: nunca va a los logs). */
+    usuarioId: z.number().int().positive(),
   }),
   z.object({
     tipo: z.literal('voz'),
@@ -88,7 +90,11 @@ export class VozNoAdmitidaError extends Error {
 /** Lo que el procesador necesita del exterior. TelegramService lo arma al arrancar. */
 export interface DependenciasProcesador {
   responder(chatId: number, texto: string): Promise<RespuestaConversacion>;
-  aprobar(chatId: number, vista: VistaBorrador): Promise<RespuestaConversacion>;
+  aprobar(
+    chatId: number,
+    vista: VistaBorrador,
+    usuarioId: number,
+  ): Promise<RespuestaConversacion>;
   marcarMostrada(borradorId: string, version: number): Promise<void>;
   /** Estado real del borrador del chat tras un trabajo cortado; null si no hay nada que mostrar. */
   estadoTrasFallo(
@@ -208,10 +214,11 @@ function procesar(
     case 'aprobar':
       return conReintento(
         () =>
-          deps.aprobar(trabajo.chatId, {
-            borradorId: trabajo.borradorId,
-            version: trabajo.version,
-          }),
+          deps.aprobar(
+            trabajo.chatId,
+            { borradorId: trabajo.borradorId, version: trabajo.version },
+            trabajo.usuarioId,
+          ),
         esConexionRechazada,
         ctx,
       );

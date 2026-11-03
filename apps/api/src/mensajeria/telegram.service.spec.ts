@@ -213,6 +213,7 @@ describe('TelegramService: botón "✅ Aprobar"', () => {
 
     await servicio.recibirBoton(
       CHAT,
+      CHAT,
       UPDATE,
       datosBotonAprobar(VISTA),
       77,
@@ -224,7 +225,13 @@ describe('TelegramService: botón "✅ Aprobar"', () => {
       MENSAJES_RECEPCION.procesandoBoton,
     );
     expect(cola.encolar).toHaveBeenCalledWith(
-      { tipo: 'aprobar', chatId: CHAT, ...VISTA, messageId: 77 },
+      {
+        tipo: 'aprobar',
+        chatId: CHAT,
+        ...VISTA,
+        messageId: 77,
+        usuarioId: CHAT,
+      },
       `tg-${UPDATE}`,
     );
     expect(responderCallback.mock.invocationCallOrder[0]).toBeLessThan(
@@ -247,6 +254,7 @@ describe('TelegramService: botón "✅ Aprobar"', () => {
 
       await servicio.recibirBoton(
         CHAT,
+        CHAT,
         UPDATE,
         datos,
         messageId,
@@ -267,6 +275,7 @@ describe('TelegramService: botón "✅ Aprobar"', () => {
     cola.encolar.mockRejectedValueOnce(new Error('Redis caído'));
 
     await servicio.recibirBoton(
+      CHAT,
       CHAT,
       UPDATE,
       datosBotonAprobar(VISTA),

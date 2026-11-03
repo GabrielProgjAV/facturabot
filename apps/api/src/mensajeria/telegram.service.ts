@@ -161,6 +161,7 @@ export class TelegramService
     this.bot.on('callback_query:data', (ctx) =>
       this.recibirBoton(
         ctx.chat?.id,
+        ctx.callbackQuery.from.id,
         ctx.update.update_id,
         ctx.callbackQuery.data,
         ctx.callbackQuery.message?.message_id,
@@ -201,6 +202,7 @@ export class TelegramService
    */
   async recibirBoton(
     chatId: number | undefined,
+    usuarioId: number,
     updateId: number,
     datos: string,
     messageId: number | undefined,
@@ -214,7 +216,7 @@ export class TelegramService
     }
     await this.avisar(responderCallback, MENSAJES_RECEPCION.procesandoBoton);
     await this.encolar(
-      { tipo: 'aprobar', chatId, ...vista, messageId },
+      { tipo: 'aprobar', chatId, ...vista, messageId, usuarioId },
       updateId,
       responder,
     );
@@ -344,7 +346,8 @@ export class TelegramService
   private dependenciasProcesador(): DependenciasProcesador {
     return {
       responder: (chatId, texto) => this.conversacion.responder(chatId, texto),
-      aprobar: (chatId, vista) => this.conversacion.aprobar(chatId, vista),
+      aprobar: (chatId, vista, usuarioId) =>
+        this.conversacion.aprobar(chatId, vista, usuarioId),
       marcarMostrada: (borradorId, version) =>
         this.conversacion.marcarMostrada(borradorId, version),
       estadoTrasFallo: (chatId, desde) =>

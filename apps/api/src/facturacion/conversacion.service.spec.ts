@@ -19,6 +19,7 @@ interface Fila {
   version: number;
   versionMostrada: number | null;
   actualizadoEn: Date;
+  aprobadoEn: Date | null;
 }
 
 function fila(cambios: Partial<Fila> = {}): Fila {
@@ -30,6 +31,7 @@ function fila(cambios: Partial<Fila> = {}): Fila {
     version: 1,
     versionMostrada: 1,
     actualizadoEn: new Date('2026-11-02T20:05:00Z'),
+    aprobadoEn: null,
     ...cambios,
   };
 }
@@ -69,8 +71,10 @@ function crear(pendiente: Fila | null) {
 const boton = (version: number, borradorId = 'b1') => ({ borradorId, version });
 
 const APROBACION = expect.objectContaining({
-  data: { estado: 'APROBADO' },
+  data: expect.objectContaining({ estado: 'APROBADO' }) as unknown,
 });
+/** Quien pulsa el botón (usuario ficticio). */
+const USUARIO = 4242;
 
 const sinNit = {
   ...borrador,
@@ -281,7 +285,7 @@ describe('ConversacionService', () => {
         fila({ version: 2, versionMostrada: 2 }),
       );
 
-      const respuesta = await servicio.aprobar(42, boton(2));
+      const respuesta = await servicio.aprobar(42, boton(2), USUARIO);
 
       expect(prisma.borrador.updateMany).toHaveBeenCalledWith({
         where: {
@@ -290,7 +294,11 @@ describe('ConversacionService', () => {
           version: 2,
           versionMostrada: 2,
         },
-        data: { estado: 'APROBADO' },
+        data: {
+          estado: 'APROBADO',
+          aprobadoPor: 4242n,
+          aprobadoEn: expect.any(Date) as Date,
+        },
       });
       expect(interprete.interpretar).not.toHaveBeenCalled();
       expect(respuesta.texto).toContain('aprobada');
@@ -302,7 +310,7 @@ describe('ConversacionService', () => {
         fila({ version: 2, versionMostrada: 1 }),
       );
 
-      const respuesta = await servicio.aprobar(42, boton(1));
+      const respuesta = await servicio.aprobar(42, boton(1), USUARIO);
 
       expect(prisma.borrador.updateMany).not.toHaveBeenCalled();
       expect(respuesta.texto).toContain('ya no está vigente');
@@ -319,7 +327,7 @@ describe('ConversacionService', () => {
         fila({ version: 2, versionMostrada: 1 }),
       );
 
-      const respuesta = await servicio.aprobar(42, boton(2));
+      const respuesta = await servicio.aprobar(42, boton(2), USUARIO);
 
       expect(prisma.borrador.updateMany).not.toHaveBeenCalled();
       expect(respuesta.texto).toContain('ya no está vigente');
@@ -330,7 +338,7 @@ describe('ConversacionService', () => {
         fila({ version: 2, versionMostrada: 2 }),
       );
 
-      const respuesta = await servicio.aprobar(42, boton(1));
+      const respuesta = await servicio.aprobar(42, boton(1), USUARIO);
 
       expect(prisma.borrador.updateMany).not.toHaveBeenCalled();
       expect(respuesta.texto).toContain('ya no está vigente');
@@ -346,7 +354,7 @@ describe('ConversacionService', () => {
         fila({ id: 'b2', version: 1, versionMostrada: 1 }),
       );
 
-      const respuesta = await servicio.aprobar(42, boton(1, 'b1'));
+      const respuesta = await servicio.aprobar(42, boton(1, 'b1'), USUARIO);
 
       expect(prisma.borrador.updateMany).not.toHaveBeenCalled();
       expect(respuesta.mostrar?.borradorId).toBe('b2');
@@ -355,7 +363,7 @@ describe('ConversacionService', () => {
     it('sin borrador pendiente (cancelado o ya aprobado): avisa que no está vigente', async () => {
       const { servicio, prisma } = crear(null);
 
-      const respuesta = await servicio.aprobar(42, boton(1));
+      const respuesta = await servicio.aprobar(42, boton(1), USUARIO);
 
       expect(respuesta.texto).toContain('ya no está vigente');
       expect(respuesta.mostrar).toBeUndefined();
@@ -369,7 +377,7 @@ describe('ConversacionService', () => {
         .mockResolvedValueOnce(fila())
         .mockResolvedValueOnce(fila({ version: 2, versionMostrada: 1 }));
 
-      const respuesta = await servicio.aprobar(42, boton(1));
+      const respuesta = await servicio.aprobar(42, boton(1), USUARIO);
 
       expect(respuesta.texto).not.toContain('aprobada');
       expect(respuesta.texto).toContain('ya no está vigente');
@@ -383,7 +391,7 @@ describe('ConversacionService', () => {
     it('no aprueba si falta un dato y dice qué falta', async () => {
       const { servicio, prisma } = crear(fila({ datos: sinNit }));
 
-      const respuesta = await servicio.aprobar(42, boton(1));
+      const respuesta = await servicio.aprobar(42, boton(1), USUARIO);
 
       expect(respuesta.texto).toContain('NIT o cédula');
       expect(prisma.borrador.updateMany).not.toHaveBeenCalled();
@@ -432,6 +440,22 @@ describe('ConversacionService', () => {
       const estado = await servicio.estadoTrasFallo(42, desde);
 
       expect(estado?.texto).toContain('quedó cancelado');
+    });
+
+    it('usa la hora de la aprobación, no la de la última escritura', async () => {
+      const { servicio, prisma } = crear(null);
+      prisma.borrador.findFirst
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(
+          fila({
+            estado: 'APROBADO',
+            // Aprobado antes de encolar el trabajo, aunque luego se haya escrito algo más.
+            aprobadoEn: new Date('2026-11-02T19:30:00Z'),
+            actualizadoEn: new Date('2026-11-02T20:10:00Z'),
+          }),
+        );
+
+      expect(await servicio.estadoTrasFallo(42, desde)).toBeNull();
     });
 
     it('el último cambio es anterior al trabajo cortado: null (aviso genérico)', async () => {

@@ -45,6 +45,10 @@ model Borrador {
   version         Int            @default(1)
   /// Última versión cuyo resumen Telegram confirmó haber recibido. Null = nunca se mostró.
   versionMostrada Int?           @map("version_mostrada")
+  /// Id de Telegram del usuario que pulsó "✅ Aprobar" (4.4 §3.5). Dato personal: nunca va a los logs.
+  aprobadoPor     BigInt?        @map("aprobado_por")
+  /// Fecha y hora exacta de la aprobación (actualizadoEn cambia con cualquier escritura).
+  aprobadoEn      DateTime?      @map("aprobado_en") @db.Timestamptz
   creadoEn        DateTime       @default(now()) @map("creado_en") @db.Timestamptz
   actualizadoEn   DateTime       @updatedAt @map("actualizado_en") @db.Timestamptz
 

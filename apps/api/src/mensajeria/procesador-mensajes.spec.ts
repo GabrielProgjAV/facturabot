@@ -64,7 +64,14 @@ const VISTA = {
   version: 1,
 };
 const texto = () => ({ tipo: 'texto', chatId: CHAT, texto: TEXTO });
-const aprobar = { tipo: 'aprobar', chatId: CHAT, ...VISTA, messageId: 77 };
+const USUARIO = 4243; // usuario ficticio que pulsa el botón
+const aprobar = {
+  tipo: 'aprobar',
+  chatId: CHAT,
+  ...VISTA,
+  messageId: 77,
+  usuarioId: USUARIO,
+};
 
 /** El mensaje que se envió al chat, sin mirar el botón. */
 function expectEnviado(
@@ -107,7 +114,7 @@ describe('procesarMensaje: botón "✅ Aprobar"', () => {
 
     await procesarMensaje(aprobar, 'j9', deps);
 
-    expect(deps.aprobar).toHaveBeenCalledWith(CHAT, VISTA);
+    expect(deps.aprobar).toHaveBeenCalledWith(CHAT, VISTA, USUARIO);
     expect(deps.quitarBoton).toHaveBeenCalledWith(CHAT, 77);
     expect(deps.enviar).toHaveBeenCalledWith(
       CHAT,
@@ -166,7 +173,14 @@ describe('procesarMensaje: botón "✅ Aprobar"', () => {
   it.each([
     ['borradorId que no es uuid', { ...aprobar, borradorId: 'b1' }],
     ['versión 0', { ...aprobar, version: 0 }],
-    ['sin messageId', { tipo: 'aprobar', chatId: CHAT, ...VISTA }],
+    [
+      'sin messageId',
+      { tipo: 'aprobar', chatId: CHAT, ...VISTA, usuarioId: USUARIO },
+    ],
+    [
+      'sin usuarioId',
+      { tipo: 'aprobar', chatId: CHAT, ...VISTA, messageId: 77 },
+    ],
   ])('trabajo "aprobar" inválido (%s): no se procesa', async (_caso, datos) => {
     const { deps } = crearDeps();
 

@@ -11,6 +11,7 @@ import type { InterpreteTextoService } from './interprete-texto.service.js';
 
 const CHAT_A = 999000003; // chat ficticio
 const CHAT_B = 999000004; // chat ficticio
+const USUARIO = 999000006; // usuario ficticio que pulsa el botón
 
 const borrador: BorradorFactura = {
   cliente: { nombre: 'Ferretería Ejemplo', identificacion: '900000001' }, // NIT ficticio
@@ -96,22 +97,36 @@ describe('aprobación por versión contra PostgreSQL', () => {
     expect(si.texto).toContain('toca ✅ Aprobar');
     expect((await estadoDe(id)).estado).toBe('PENDIENTE');
 
-    const respuesta = await servicio.aprobar(CHAT_A, {
-      borradorId: id,
-      version: 1,
-    });
+    const respuesta = await servicio.aprobar(
+      CHAT_A,
+      {
+        borradorId: id,
+        version: 1,
+      },
+      USUARIO,
+    );
 
     expect(respuesta.texto).toContain('aprobada');
     expect((await estadoDe(id)).estado).toBe('APROBADO');
+    const guardado = await db.borrador.findUniqueOrThrow({
+      where: { id },
+      select: { aprobadoPor: true, aprobadoEn: true },
+    });
+    expect(guardado.aprobadoPor).toBe(BigInt(USUARIO));
+    expect(guardado.aprobadoEn).toBeInstanceOf(Date);
   });
 
   it('version 2, versionMostrada 1, botón de la 2: no aprueba y la fila sigue PENDIENTE', async () => {
     const fila = await crearPendiente(CHAT_A, 2, 1);
 
-    const respuesta = await servicio.aprobar(CHAT_A, {
-      borradorId: fila.id,
-      version: 2,
-    });
+    const respuesta = await servicio.aprobar(
+      CHAT_A,
+      {
+        borradorId: fila.id,
+        version: 2,
+      },
+      USUARIO,
+    );
 
     expect(respuesta.texto).toContain('ya no está vigente');
     expect(await estadoDe(fila.id)).toEqual({
@@ -134,10 +149,14 @@ describe('aprobación por versión contra PostgreSQL', () => {
     creadas.push(b);
     await servicio.marcarMostrada(b, 1);
 
-    const respuesta = await servicio.aprobar(CHAT_A, {
-      borradorId: a.id,
-      version: 1,
-    });
+    const respuesta = await servicio.aprobar(
+      CHAT_A,
+      {
+        borradorId: a.id,
+        version: 1,
+      },
+      USUARIO,
+    );
 
     expect(respuesta.texto).toContain('ya no está vigente');
     expect((await estadoDe(a.id)).estado).toBe('CANCELADO');
@@ -151,7 +170,11 @@ describe('aprobación por versión contra PostgreSQL', () => {
   it('estadoTrasFallo: con la aprobación guardada antes del corte dice que quedó aprobada', async () => {
     const desde = new Date(Date.now() - 1000);
     const fila = await crearPendiente(CHAT_A, 1, 1);
-    await servicio.aprobar(CHAT_A, { borradorId: fila.id, version: 1 });
+    await servicio.aprobar(
+      CHAT_A,
+      { borradorId: fila.id, version: 1 },
+      USUARIO,
+    );
 
     const estado = await servicio.estadoTrasFallo(CHAT_A, desde);
 
@@ -220,10 +243,14 @@ describe('aprobación por versión contra PostgreSQL', () => {
       interprete,
     );
 
-    const respuesta = await conCarrera.aprobar(CHAT_B, {
-      borradorId: fila.id,
-      version: 1,
-    });
+    const respuesta = await conCarrera.aprobar(
+      CHAT_B,
+      {
+        borradorId: fila.id,
+        version: 1,
+      },
+      USUARIO,
+    );
 
     expect(respuesta.texto).not.toContain('aprobada');
     expect(respuesta.texto).toContain('ya no está vigente');

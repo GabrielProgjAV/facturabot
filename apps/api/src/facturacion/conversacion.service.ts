@@ -105,10 +105,12 @@ export class ConversacionService {
   /**
    * Aprueba con el botón "✅ Aprobar" pulsado: solo si es el borrador PENDIENTE del chat y
    * `version == versionMostrada ==` la versión del botón. Si no, reenvía el resumen vigente.
+   * @param usuarioId id de Telegram de quien pulsó el botón: se guarda en `aprobadoPor`.
    */
   async aprobar(
     chatId: number,
     vista: VistaBorrador,
+    usuarioId: number,
   ): Promise<RespuestaConversacion> {
     const pendiente = await this.buscarPendiente(chatId);
     if (!pendiente) {
@@ -140,7 +142,11 @@ export class ConversacionService {
         version: v,
         versionMostrada: v,
       },
-      data: { estado: 'APROBADO' },
+      data: {
+        estado: 'APROBADO',
+        aprobadoPor: BigInt(usuarioId),
+        aprobadoEn: new Date(),
+      },
     });
     if (count !== 1) {
       this.logger.warn('Aprobación descartada: el borrador cambió al aprobar');
@@ -176,7 +182,10 @@ export class ConversacionService {
       where: { chatId: BigInt(chatId) },
       orderBy: { actualizadoEn: 'desc' },
     });
-    if (!ultimo || ultimo.actualizadoEn < desde) return null;
+    if (!ultimo) return null;
+    // La hora exacta de la aprobación, si la hay: actualizadoEn cambia con cualquier escritura.
+    const cambio = ultimo.aprobadoEn ?? ultimo.actualizadoEn;
+    if (cambio < desde) return null;
     if (ultimo.estado === 'APROBADO') {
       return {
         texto: `✅ Tu factura quedó aprobada.\n\n${resumenBorrador(datosDe(ultimo))}`,
