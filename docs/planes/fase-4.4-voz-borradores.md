@@ -292,9 +292,9 @@ Cada paso con su verificación (lint, Prettier, tsc, test y test:int), commit y 
 2. ✅ Voz → conversación, con la duración real, la descarga por partes y el límite de 1.000.
    `66380af`.
 3. ✅ Autorización por usuario y en chats privados (§3.5); botón en línea y tipo de trabajo
-   `aprobar`; el "sí" según la decisión 1. `b167ab5`. Pendiente: `aprobado_por` (3b).
-   - 3b. Columna `aprobado_por` con su migración (SQL revisado por Gabriel antes de aplicarla).
-4. Estado real tras un reinicio.
+   `aprobar`; el "sí" según la decisión 1. `b167ab5`.
+   - 3b. ✅ Columnas `aprobado_por` y `aprobado_en` con su migración. `7376a5d`.
+4. ✅ Estado real tras un reinicio. `f2ed97d`.
    - 4b. Borradores pendientes viejos (decisión 7, §14.1).
    - 4c. Latencia: timeout de Ollama a 240 s y "⏳ Sigo procesando…" a los 30 s (decisión 8, §14.2).
 5. Set de evaluación y línea base del intérprete (con la opción D de la decisión 8: en las
@@ -428,6 +428,82 @@ del paso 5, que mida exactitud y tiempo; C solo si la memoria lo permite (hoy no
   confirmados por el usuario.
 - **Prohibido:** scraping de la DIAN o del RUES, y APIs de terceros que reciban identificaciones
   (Ley 1581 de 2012).
+
+## 15. Estado para retomar (2026-11-02)
+
+Para una sesión nueva: leer CLAUDE.md, CLAUDE.local.md, este plan y `docs/planes/fase-4.3-cola.md`
+(§17 y §18). Rama `feat/fase-4-voz`, PR #3 en borrador hacia `main` (no se integra hasta cerrar
+la fase 4). Último commit de código: `7376a5d`.
+
+### Hecho
+
+| Paso | Qué | Commit |
+|---|---|---|
+| 1 | `identificacion.ts`: normalización, DV (Orden Administrativa 4 de 1989) y forma del número | `08921b6` |
+| 2 | Voz → conversación, duración real del Ogg (`voz/duracion-ogg.ts`), descarga por partes, límite de 1.000 en la transcripción, "Cancelar." con punto | `66380af` |
+| 3 | Botón "✅ Aprobar" (`a:<id>:<versión>`), trabajo `aprobar` en la cola, el "sí" ya no aprueba, autorización por usuario (`autorizado()`) y solo en chats privados | `b167ab5` |
+| 3b | Migración `20261103014907_aprobado_por` (`aprobado_por` BIGINT y `aprobado_en` TIMESTAMPTZ), aplicada en la base local | `7376a5d` |
+| 4 | Estado real tras un trabajo cortado (`estadoTrasFallo`, con `job.timestamp` y `aprobado_en`) | `f2ed97d` |
+
+Verificación al cerrar el paso 4: lint sin warnings, Prettier, tsc, 263 tests unitarios y 14 de
+integración en verde. Las mutaciones confirmaron que los tests detectan: quitar la regla de chat
+privado, un "sí" que vuelva a aprobar, la regla del residuo 0 o 1 del DV y el id del borrador en la
+aprobación.
+
+### Pendiente, en orden
+
+1. **4b. Borradores pendientes viejos** (decisión 7, aprobada, §14.1): más de 2 horas sin cambios →
+   preguntar con dos botones (`n:<id>` nuevo, `c:<id>` corregir); el mensaje en espera en Redis
+   por 15 minutos; el botón Aprobar de un borrador viejo pide confirmar otra vez.
+2. **4c. Latencia** (decisión 8, aprobadas A y B, §14.2): timeout de Ollama de 120 a 240 s
+   (`interprete-texto.service.ts`, `AbortSignal.timeout`) y "⏳ Sigo procesando…" si un trabajo pasa
+   de 30 s. C (keep_alive más largo) no, por ahora.
+3. **Integrar `identificacion.ts`** en el borrador y el resumen (no tiene paso asignado en §10;
+   propuesta: 4d): DV en `BorradorFactura.cliente`, `problema` de forma o DV → no aprobable y
+   pregunta (§5, §5.1), advertencia de identificación por voz, cédula por voz no aprobable hasta
+   confirmarla por texto (decisión 3), documento extranjero según `esDocumentoExtranjero`. Requiere
+   saber si el borrador vino de voz: marcarlo en el trabajo o en `datos`.
+4. **5. Set de evaluación** (decisión 4, §7): `apps/api/eval/interprete/` con los 8 casos del
+   2026-10-15 y los nuevos (precios abreviados, cantidad × precio unitario), línea base con las
+   instrucciones actuales, y la **opción D** de la decisión 8 (en las correcciones, la IA devuelve
+   solo los cambios) medida en exactitud y tiempo. Detección en código de ítems menores a $1.000
+   (decisión 5: solo pregunta, no rechaza). Cualquier cambio a las instrucciones necesita la
+   aprobación de Gabriel.
+5. Detalle de §8: título "🧾 Factura aprobada" tras aprobar.
+6. **6. Prueba manual** con un guion de datos ficticios (botón, botón viejo, "sí", voz, reinicio).
+7. **7. Cierre:** subagentes `control-calidad` y `seguridad`, bitácora (README.es.md), estado en
+   los dos README y "Estado y plan" y "Arquitectura" del CLAUDE.md (hoy dice "aprobar con 'sí' por
+   regex": ya no es así). Después: auditoría externa, PR de la fase 4 listo para revisión, tag
+   `v0.4.0`.
+
+### Detalles que una sesión nueva necesita
+
+- **Node 24:** anteponer `C:\Users\gabri\AppData\Roaming\fnm\node-versions\v24.21.0\installation` al
+  PATH (CLAUDE.local.md). Para la API en el panel de Terminal, un script de PowerShell que haga eso,
+  `Set-Location apps/api` y `pnpm run start:dev`.
+- **El worker arrancó** si Redis muestra una conexión `bull:bWVuc2FqZXM=` con `cmd=bzpopmin`
+  (`redis-cli CLIENT LIST`).
+- **Migraciones:** `prisma migrate dev` no corre sin terminal interactiva. Se genera el SQL con
+  `prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --script` (y se
+  compara contra el esquema de `HEAD`), se crea la carpeta a mano, Gabriel revisa el SQL y se aplica
+  con `prisma migrate deploy`.
+- **Memoria:** `.wslconfig` con `memory=6GB` aplicado (Docker ve 5,8 GiB). La memoria comprometida
+  de Windows está justa: si qwen no carga ("out-of-memory"), pedir cerrar programas. qwen se
+  descarga a los 5 minutos sin uso; la recarga cuesta ~10 s. Mediciones y scripts en
+  `C:\Users\gabri\Documents\facturabot-mediciones\` (fuera del repo).
+- **Latencia medida** (§14.2): la IA genera ~6 tokens/s; una corrección de un borrador de 9 productos
+  tarda ~35 s con qwen cargado, y un trabajo real llegó a 116 s.
+- **Base local:** la prueba del botón del 2026-11-02 aprobó el borrador PENDIENTE del 2026-10-30
+  (el caso de la decisión 7). No hay nada emitido: Alegra aún no está conectado. Gabriel no dejó
+  descrito qué vio en cada paso de esa prueba.
+- **Telegram:** `TELEGRAM_CHATS_PERMITIDOS` ahora se compara con el id del usuario (`ctx.from.id`),
+  que en un chat privado es el mismo del chat.
+- **CI:** levanta PostgreSQL y Redis, aplica las migraciones y corre `pnpm test:int`. El aviso de
+  fallos del CI (Auto-fix) está activo para el PR #3; Gabriel pide ver el error antes de arreglar.
+- **Fuentes oficiales:** la Registraduría bloquea la descarga automática (403); se leyó con el
+  navegador integrado. No descargar PDFs sin permiso.
+- **No tocar:** `docs/prompts/pivote-formalizacion.md` sigue sin seguimiento (tarea B, después de
+  integrar la fase 4); la rama `historial-privado` y las refs `refs/t3/checkpoints/*`.
 
 ## Para estudiar
 
