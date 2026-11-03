@@ -21,6 +21,11 @@ export const DURACION_MAXIMA_VOZ_SEGUNDOS = 120;
 /** Pausa antes del único reintento interno. */
 export const ESPERA_REINTENTO_MS = 2000;
 
+/** Si un texto o una nota tarda más que esto, se avisa que sigue en proceso (4.4 §14.2, opción B). */
+export const AVISO_DEMORA_MS = 30_000;
+
+export const AVISO_DEMORA = '⏳ Sigo procesando…';
+
 /**
  * Datos de un trabajo de la cola. Vienen de Redis, así que se validan antes de usarlos.
  * La voz solo lleva el file_id de Telegram: el audio nunca se guarda en Redis.
@@ -141,6 +146,21 @@ export async function procesarMensaje(
   const trabajo = validacion.data;
   const ctx = { jobId, deps, etapa: 'conversar' as Etapa };
 
+  // Un solo aviso por trabajo. Se guarda la promesa para que la respuesta no llegue antes que él.
+  let avisoDemora: Promise<void> | undefined;
+  const temporizador =
+    trabajo.tipo === 'aprobar'
+      ? undefined
+      : setTimeout(() => {
+          avisoDemora = deps
+            .enviar(trabajo.chatId, AVISO_DEMORA, null)
+            .catch((err: unknown) =>
+              deps.logger.warn(
+                `Trabajo ${jobId} (${trabajo.tipo}) falló en avisar la demora: ${describirError(err)}`,
+              ),
+            );
+        }, AVISO_DEMORA_MS);
+
   let respuesta: RespuestaConversacion;
   try {
     respuesta = await procesar(trabajo, ctx);
@@ -149,7 +169,10 @@ export async function procesarMensaje(
       `Trabajo ${jobId} (${trabajo.tipo}) falló en ${ctx.etapa}: ${describirError(err)}`,
     );
     respuesta = { texto: mensajeDeFalla(err, trabajo.tipo, ctx.etapa) };
+  } finally {
+    clearTimeout(temporizador);
   }
+  await avisoDemora;
 
   if (trabajo.tipo === 'aprobar') {
     // El botón pulsado ya no vale: o se aprobó, o se reenvía el resumen vigente con uno nuevo.

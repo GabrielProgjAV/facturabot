@@ -123,7 +123,9 @@ export class InterpreteTextoService {
           { role: 'user', content: usuario },
         ],
       }),
-      signal: AbortSignal.timeout(120_000),
+      // Un trabajo real llegó a 116 s (corrección de 9 productos con recarga de qwen): 240 s deja
+      // margen (4.4 §14.2, opción A).
+      signal: AbortSignal.timeout(240_000),
     });
     if (!respuesta.ok) {
       throw new Error(`Ollama respondió ${respuesta.status}`);

@@ -1,4 +1,6 @@
 import {
+  AVISO_DEMORA,
+  AVISO_DEMORA_MS,
   avisarTrabajoFallido,
   type DependenciasProcesador,
   ESPERA_REINTENTO_MS,
@@ -557,5 +559,95 @@ describe('avisarTrabajoFallido', () => {
       avisarTrabajoFallido(voz, 'j10', ENCOLADO, new Error('x'), deps),
     ).resolves.toBeUndefined();
     expect(deps.logger.error).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('procesarMensaje: aviso de demora (4.4 §14.2)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /** Una respuesta que llega cuando el test la suelta. */
+  function respuestaPendiente() {
+    let soltar!: (respuesta: { texto: string }) => void;
+    const promesa = new Promise<{ texto: string }>((resolver) => {
+      soltar = resolver;
+    });
+    return { promesa, soltar };
+  }
+
+  it('un texto que tarda más de 30 s avisa una vez, antes de la respuesta', async () => {
+    const { deps } = crearDeps();
+    const lenta = respuestaPendiente();
+    deps.responder.mockReturnValueOnce(lenta.promesa);
+
+    const trabajo = procesarMensaje(texto(), 'j1', deps);
+    await vi.advanceTimersByTimeAsync(AVISO_DEMORA_MS);
+    expect(deps.enviar).toHaveBeenCalledExactlyOnceWith(
+      CHAT,
+      AVISO_DEMORA,
+      null,
+    );
+
+    await vi.advanceTimersByTimeAsync(AVISO_DEMORA_MS);
+    lenta.soltar({ texto: 'Resumen' });
+    await trabajo;
+
+    expect(deps.enviar).toHaveBeenCalledTimes(2);
+    expect(deps.enviar).toHaveBeenLastCalledWith(CHAT, 'Resumen', null);
+  });
+
+  it('si responde antes de 30 s no avisa', async () => {
+    const { deps } = crearDeps();
+
+    await procesarMensaje(texto(), 'j2', deps);
+    await vi.advanceTimersByTimeAsync(AVISO_DEMORA_MS * 2);
+
+    expect(deps.enviar).toHaveBeenCalledTimes(1);
+    expect(deps.enviar).not.toHaveBeenCalledWith(CHAT, AVISO_DEMORA, null);
+  });
+
+  it('una nota de voz lenta también avisa', async () => {
+    const { deps } = crearDeps();
+    const lenta = respuestaPendiente();
+    deps.responder.mockReturnValueOnce(lenta.promesa);
+
+    const trabajo = procesarMensaje(voz, 'j3', deps);
+    await vi.advanceTimersByTimeAsync(AVISO_DEMORA_MS);
+    lenta.soltar({ texto: 'Resumen' });
+    await trabajo;
+
+    expect(deps.enviar).toHaveBeenNthCalledWith(1, CHAT, AVISO_DEMORA, null);
+  });
+
+  it('el botón Aprobar no avisa', async () => {
+    const { deps } = crearDeps();
+    const lenta = respuestaPendiente();
+    deps.aprobar.mockReturnValueOnce(lenta.promesa);
+
+    const trabajo = procesarMensaje(aprobar, 'j4', deps);
+    await vi.advanceTimersByTimeAsync(AVISO_DEMORA_MS);
+    lenta.soltar({ texto: '✅ Factura aprobada.' });
+    await trabajo;
+
+    expect(deps.enviar).not.toHaveBeenCalledWith(CHAT, AVISO_DEMORA, null);
+  });
+
+  it('si el aviso no se puede enviar, la respuesta llega igual', async () => {
+    const { deps } = crearDeps();
+    const lenta = respuestaPendiente();
+    deps.responder.mockReturnValueOnce(lenta.promesa);
+    deps.enviar.mockRejectedValueOnce(new Error('Bad Gateway'));
+
+    const trabajo = procesarMensaje(texto(), 'j5', deps);
+    await vi.advanceTimersByTimeAsync(AVISO_DEMORA_MS);
+    lenta.soltar({ texto: 'Resumen' });
+    await trabajo;
+
+    expect(deps.enviar).toHaveBeenLastCalledWith(CHAT, 'Resumen', null);
+    expect(deps.logger.warn).toHaveBeenCalled();
   });
 });
