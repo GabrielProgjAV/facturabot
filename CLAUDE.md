@@ -20,18 +20,27 @@ explícita.
 
 ## Flujo por tarea
 
-1. **PLAN** antes de tocar código: qué, archivos, alternativas, riesgos. Esperar un "aprobado".
+1. **PLAN** antes de tocar código, de 1 o 2 páginas: objetivo, decisiones con recomendación y riesgos.
+   Esperar un "aprobado". Mediciones y relevos van en la bitácora, no en el plan. Antes de proponer
+   algo: "si no lo hago, ¿qué le pasa al piloto con un solo usuario de confianza?"; si es "nada
+   grave", se anota como pendiente para antes de tener más usuarios y no se implementa.
+   - **Decisiones irreversibles** (esquema, emisión, dependencias, modelo de IA, seguridad): se le
+     preguntan a Gabriel. **Reversibles** (textos, mensajes, umbrales): las decide el agente y las
+     reporta.
+   - Con un alcance aprobado, los pasos se hacen en orden, con commit y CI en verde por paso, sin
+     detenerse: se reporta al final o cuando aparezca una decisión irreversible.
 2. **Rama** `tipo/descripcion` (`feat/`, `fix/`, `docs/`, `chore/`) creada desde `main` actualizada.
    Nunca commits directos a `main` (está protegida: exige PR y CI en verde). Commits con prefijos de
    Conventional Commits (`feat:`, `fix:`, `docs:`, `ci:`, `chore:`). Integración por **squash**.
 3. **Antes del PR**, en `apps/api`: `pnpm run lint`, `pnpm exec prettier --check src test`,
    `pnpm exec tsc --noEmit -p tsconfig.json` y `pnpm test` en verde; migración de Prisma si cambia el
    esquema. Revisar el diff completo en busca de secretos y datos reales. Correr los subagentes
-   `control-calidad` y `seguridad` (`.claude/agents/`).
+   `control-calidad` y `seguridad` (`.claude/agents/`). Pruebas de mutación solo en predicados
+   críticos (aprobar, emitir, DV, totales).
 4. **Reporte del PR:** qué se hizo (archivo por archivo), por qué, cómo probarlo, riesgos y decisiones
    pendientes para Gabriel.
-5. Al cerrar una subfase: actualizar la bitácora (`README.es.md`) y el estado del roadmap en los dos
-   README (español e inglés). Al cerrar cada subfase, actualizar también **Estado y plan** del
+5. Al cerrar una subfase: actualizar la bitácora (`README.es.md`, solo en español) y el estado del
+   roadmap en los dos README (el inglés es un resumen corto). Al cerrar cada subfase, actualizar también **Estado y plan** del
    CLAUDE.md.
 6. Cada fase terminada recibe un tag anotado `vX.Y.0` (hechos: `v0.1.0`, `v0.2.0`, `v0.3.0`).
 
@@ -124,9 +133,8 @@ Ollama debe estar corriendo con el modelo oficial descargado.
 
 - ✅ Fases 0–3: validación, base, bot eco en Telegram y factura por texto (tags `v0.1.0`–`v0.3.0`).
 - 🟡 Fase 4 voz (`feat/fase-4-voz`, PR #3 en borrador): ✅ 4.1 Whisper, ✅ 4.2 transcripción, ✅ 4.3 cola
-  BullMQ (texto y voz). Sigue 4.4 voz → borradores; su plan incluye §18.2 de `docs/planes/fase-4.3-cola.md`
-  (botón en línea para aprobar, estado real tras un reinicio, precios abreviados). Pendientes para la
-  3.5 en §17 y §18.3 de ese plan.
+  BullMQ (texto y voz). 🟡 4.4 voz → borradores, con el alcance congelado en §0 de
+  `docs/planes/fase-4.4-voz-borradores.md` (lo demás quedó anotado como pendiente ahí).
 - PR de la fase 4: marcar como "(ficticio)" los NIT y cédulas de prueba de la bitácora de los README, sobre todo la cédula de prueba de la bitácora.
 - Auditoría externa independiente (`docs/prompts/auditoria-seguridad.md`): antes de integrar el PR de la fase 4 y antes de empezar la fase 6.
 - Fase 3.5 (tras `v0.4.0`, antes de Alegra): caso f, rechazar total = 0 y test e2e (el dígito de verificación del NIT pasó a la 4.4). PR aparte: `OLLAMA_MODELO_TEXTO` por defecto a `qwen2.5:7b`.

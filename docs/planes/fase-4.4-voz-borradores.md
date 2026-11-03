@@ -8,6 +8,32 @@ plan son **ficticios**.
 Fuentes: §5, §17 y §18 de `docs/planes/fase-4.3-cola.md`, la bitácora de la 4.2 (README.es.md) y
 la documentación oficial de la Bot API de Telegram (`InlineKeyboardButton`, `answerCallbackQuery`).
 
+## 0. Alcance congelado (2026-11-02)
+
+Tras una revisión de arquitectura que encontró sobreingeniería para la etapa actual, Gabriel congeló
+la 4.4 a lo mínimo para cerrar la fase 4. **Esta sección manda sobre el resto del plan.**
+
+Se hace, en este orden:
+1. **4b simple** (§14.1): un PENDIENTE quieto más de 2 horas se cancela y el mensaje empieza uno nuevo.
+2. **4c:** timeout de Ollama a 240 s y "⏳ Sigo procesando…" a los 30 s (§14.2, opciones A y B).
+3. **4d:** `identificacion.ts` en el borrador y el resumen; bloquea solo si el DV no cuadra o la forma
+   es inválida.
+4. **Ítem que desaparece:** si una corrección baja los ítems y el mensaje no dice "quita", "elimina"
+   o "borra", se pregunta (regla de CLAUDE.md).
+5. **Set de evaluación mínimo:** los 8 casos y la línea base, sin cambiar las instrucciones.
+6. Título "✅ Factura aprobada", test de total = 0 y zod 4.6.6.
+7. Prueba manual corta y cierre de la fase 4.
+
+**Pendiente** (anotado, no se construye ahora):
+- Antes de tener más usuarios: preguntar con botones ante un PENDIENTE viejo, con el mensaje en espera
+  en Redis y un token en los botones (la versión completa de §14.1); bloquear la cédula que llegó por
+  voz hasta confirmarla (decisión 3); la advertencia de identificación por voz.
+- Después de Alegra: la opción D de §14.2 (la IA devuelve solo los cambios) y cualquier cambio a las
+  instrucciones del intérprete; detección de ítems menores a $1.000 (decisión 5).
+- No construir nada nuevo encima de `versionMostrada`. Lo ya hecho (duración del Ogg, descarga por
+  partes) se queda.
+- Tarea B (`docs/prompts/pivote-formalizacion.md`) y el resto de la fase 3.5.
+
 ## 1. Objetivo
 
 Que una nota de voz produzca el mismo borrador que un texto, con la misma seguridad, y que aprobar
@@ -379,6 +405,14 @@ pide confirmar otra vez.
 **Aprobada por Gabriel el 2026-11-02 tal como se recomienda.** Se vio en la prueba del botón de ese
 día: el primer mensaje corrigió el borrador PENDIENTE del 2026-10-30 (con sus 9 productos) y el
 primer botón lo aprobó.
+
+**Reemplazada el mismo día por una versión simple** (piloto con un solo usuario de confianza): si el
+PENDIENTE lleva más de 2 horas quieto (`actualizado_en`, que también se refresca al mostrar el
+resumen), el siguiente texto o nota de voz se interpreta como factura nueva y, en una transacción,
+cancela el viejo y crea el nuevo, con el aviso "📝 Tenías un borrador sin aprobar del … (cliente). Lo
+dejé cancelado y empecé uno nuevo con tu mensaje." Se interpreta **antes** de cancelar: si la IA
+falla, el viejo sigue igual. "cancelar" y "sí" no cambian; el botón Aprobar de un borrador quieto pide
+confirmar otra vez. La pregunta con botones queda pendiente para antes de tener más usuarios (§0).
 
 ### 14.2 Decisión 8: latencia de Ollama
 
