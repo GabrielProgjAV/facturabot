@@ -79,6 +79,36 @@ export function identificacionCliente(
   );
 }
 
+/** "quita", "elimina", "borra" y sus formas ("quítale", "bórralo"), pero no "borrador". */
+const PIDE_QUITAR = /\b(?:qu[ií]t|elimin|b[oó]rr(?!ador))/i;
+
+export interface ItemsQuitados {
+  cantidad: number;
+  /** Las que ya no aparecen; vacía si la IA reescribió alguna y no se sabe cuáles se fueron. */
+  descripciones: string[];
+}
+
+/**
+ * Ítems que una corrección hizo desaparecer sin que el mensaje lo pidiera, o null si no hay.
+ * La IA a veces "olvida" productos al devolver el borrador completo (CLAUDE.md: un ítem que
+ * desaparece se pregunta, nunca se deja pasar en silencio).
+ */
+export function itemsQuitadosSinPedir(
+  antes: BorradorFactura,
+  despues: BorradorFactura,
+  mensaje: string,
+): ItemsQuitados | null {
+  if (despues.items.length >= antes.items.length || PIDE_QUITAR.test(mensaje))
+    return null;
+  const normalizar = (texto: string) => texto.trim().toLowerCase();
+  const quedan = new Set(despues.items.map((i) => normalizar(i.descripcion)));
+  const cantidad = antes.items.length - despues.items.length;
+  const faltan = antes.items
+    .map((i) => i.descripcion)
+    .filter((d) => !quedan.has(normalizar(d)));
+  return { cantidad, descripciones: faltan.length === cantidad ? faltan : [] };
+}
+
 /** Por qué no se puede aprobar todavía, o null si está lista para aprobar. */
 export function motivoNoAprobable(borrador: BorradorFactura): string | null {
   const faltantes = camposFaltantes(borrador);

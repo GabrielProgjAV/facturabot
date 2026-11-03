@@ -174,6 +174,42 @@ describe('ConversacionService', () => {
       expect(prisma.borrador.create).toHaveBeenCalledTimes(1);
     });
 
+    it('una corrección que hace desaparecer un ítem sin pedirlo no se guarda y se pregunta', async () => {
+      const dos: BorradorFactura = {
+        ...borrador,
+        items: [...borrador.items, { descripcion: 'brocha', valor: 12000 }],
+      };
+      const { servicio, prisma, interprete } = crear(fila({ datos: dos }));
+      interprete.interpretar.mockResolvedValueOnce(borrador); // la IA "olvidó" la brocha
+
+      const respuesta = await servicio.responder(42, 'el nit es 123');
+
+      expect(prisma.borrador.update).not.toHaveBeenCalled();
+      expect(respuesta.texto).toMatch(
+        /^⚠️ Con tu corrección desaparecían 1 producto\(s\) \(brocha\)/,
+      );
+      expect(respuesta.texto).toContain('No cambié el borrador');
+      // El resumen es el mismo que ya tenía: misma versión, con su botón.
+      expect(respuesta.mostrar).toEqual({
+        borradorId: 'b1',
+        version: 1,
+        aprobable: true,
+      });
+    });
+
+    it('si el mensaje pide quitar el ítem, la corrección se guarda', async () => {
+      const dos: BorradorFactura = {
+        ...borrador,
+        items: [...borrador.items, { descripcion: 'brocha', valor: 12000 }],
+      };
+      const { servicio, prisma, interprete } = crear(fila({ datos: dos }));
+      interprete.interpretar.mockResolvedValueOnce(borrador);
+
+      await servicio.responder(42, 'quita la brocha');
+
+      expect(prisma.borrador.update).toHaveBeenCalled();
+    });
+
     it('otro error al crear se propaga sin reintentar', async () => {
       const { servicio, prisma } = crear(null);
       prisma.borrador.create.mockRejectedValueOnce(new Error('sin conexión'));

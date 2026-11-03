@@ -4,6 +4,8 @@ import type { Borrador } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import {
   type BorradorFactura,
+  type ItemsQuitados,
+  itemsQuitadosSinPedir,
   motivoNoAprobable,
   resumenBorrador,
 } from './factura.js';
@@ -58,6 +60,12 @@ export interface RespuestaConversacion {
    * aprobable.
    */
   mostrar?: VistaBorrador & { aprobable: boolean };
+}
+
+/** El borrador tras crear o corregir; con `quitados`, la corrección no se guardó. */
+interface Escritura {
+  fila: Borrador;
+  quitados: ItemsQuitados | null;
 }
 
 /** Qué decirle al usuario debajo del resumen. */
@@ -125,10 +133,19 @@ export class ConversacionService {
       };
     }
 
-    const fila = pendiente
+    const { fila, quitados } = pendiente
       ? await this.corregir(pendiente, texto)
       : await this.crear(chatId, texto);
-    return this.conResumen(fila, 'ninguno');
+    const resumen = this.conResumen(fila, 'ninguno');
+    if (!quitados) return resumen;
+    // La corrección no se guardó: el resumen es el mismo que el usuario ya tenía.
+    const cuales = quitados.descripciones.length
+      ? ` (${quitados.descripciones.join(', ')})`
+      : '';
+    return {
+      ...resumen,
+      texto: `⚠️ Con tu corrección desaparecían ${quitados.cantidad} producto(s)${cuales}, y tu mensaje no dice que los quite. No cambié el borrador: si querías quitarlos, escribe "quita …"; si no, escribe la corrección de nuevo.\n\n${resumen.texto}`,
+    };
   }
 
   /**
@@ -258,18 +275,25 @@ export class ConversacionService {
     };
   }
 
+  /** Si la IA hizo desaparecer ítems que el mensaje no pidió quitar, no guarda nada. */
   private async corregir(
     pendiente: Borrador,
     texto: string,
-  ): Promise<Borrador> {
-    const borrador = await this.interprete.interpretar(
-      texto,
-      datosDe(pendiente),
-    );
-    return this.prisma.borrador.update({
+  ): Promise<Escritura> {
+    const actual = datosDe(pendiente);
+    const borrador = await this.interprete.interpretar(texto, actual);
+    const quitados = itemsQuitadosSinPedir(actual, borrador, texto);
+    if (quitados) {
+      this.logger.warn(
+        `Corrección descartada: desaparecían ${quitados.cantidad} ítems sin que el mensaje lo pidiera`,
+      );
+      return { fila: pendiente, quitados };
+    }
+    const fila = await this.prisma.borrador.update({
       where: { id: pendiente.id },
       data: { datos: aJson(borrador), version: { increment: 1 } },
     });
+    return { fila, quitados: null };
   }
 
   /**
@@ -289,12 +313,13 @@ export class ConversacionService {
     });
   }
 
-  private async crear(chatId: number, texto: string): Promise<Borrador> {
+  private async crear(chatId: number, texto: string): Promise<Escritura> {
     const borrador = await this.interprete.interpretar(texto, undefined);
     try {
-      return await this.prisma.borrador.create({
+      const fila = await this.prisma.borrador.create({
         data: { chatId: BigInt(chatId), datos: aJson(borrador) },
       });
+      return { fila, quitados: null };
     } catch (err) {
       // El índice único parcial detectó un PENDIENTE que no vimos al leer (otra copia del bot
       // o un cambio manual en la base). Se mira solo el code: `meta.target` no viene relleno

@@ -1,6 +1,7 @@
 import {
   type BorradorFactura,
   calcularTotales,
+  itemsQuitadosSinPedir,
   camposFaltantes,
   motivoNoAprobable,
   parsePesos,
@@ -208,5 +209,54 @@ describe('calcularTotales', () => {
 
   it('redondea el IVA a pesos', () => {
     expect(calcularTotales(1001).iva).toBe(190);
+  });
+});
+
+describe('itemsQuitadosSinPedir (CLAUDE.md: un ítem que desaparece se pregunta)', () => {
+  const sinLaAzul: BorradorFactura = {
+    ...completo,
+    items: completo.items.filter((i) => i.descripcion !== '1/2 laca azul'),
+  };
+
+  it('si una corrección baja los ítems sin pedirlo, devuelve cuáles faltan', () => {
+    expect(
+      itemsQuitadosSinPedir(completo, sinLaAzul, 'el total es 96 mil'),
+    ).toEqual({ cantidad: 1, descripciones: ['1/2 laca azul'] });
+  });
+
+  it.each([
+    'quita la laca azul',
+    'quítale la azul',
+    'elimina la laca azul',
+    'borra la azul',
+    'bórrala',
+  ])('"%s" pide quitar: no es un problema', (mensaje) => {
+    expect(itemsQuitadosSinPedir(completo, sinLaAzul, mensaje)).toBeNull();
+  });
+
+  it('"borrador" no cuenta como "borra"', () => {
+    expect(
+      itemsQuitadosSinPedir(
+        completo,
+        sinLaAzul,
+        'en el borrador cambia el total',
+      ),
+    ).not.toBeNull();
+  });
+
+  it('con los mismos ítems o más, no hay problema', () => {
+    expect(itemsQuitadosSinPedir(completo, completo, 'x')).toBeNull();
+  });
+
+  it('si la IA reescribió las descripciones, reporta la cantidad sin nombres', () => {
+    const reescrito: BorradorFactura = {
+      ...completo,
+      items: [{ descripcion: 'lacas varias', valor: 141000 }],
+    };
+
+    expect(itemsQuitadosSinPedir(completo, reescrito, 'x')).toEqual({
+      cantidad: 2,
+      descripciones: [],
+    });
   });
 });
