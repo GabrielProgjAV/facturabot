@@ -471,56 +471,46 @@ del paso 5, que mida exactitud y tiempo; C solo si la memoria lo permite (hoy no
 - **Prohibido:** scraping de la DIAN o del RUES, y APIs de terceros que reciban identificaciones
   (Ley 1581 de 2012).
 
-## 15. Estado para retomar (2026-11-02)
+## 15. Estado para retomar (2026-11-02, cierre del día)
 
-Para una sesión nueva: leer CLAUDE.md, CLAUDE.local.md, este plan y `docs/planes/fase-4.3-cola.md`
-(§17 y §18). Rama `feat/fase-4-voz`, PR #3 en borrador hacia `main` (no se integra hasta cerrar
-la fase 4). Último commit de código: `7376a5d`.
+Para una sesión nueva: leer CLAUDE.md, CLAUDE.local.md y §0 de este plan (alcance congelado y
+pendientes). Rama `feat/fase-4-voz`, PR #3 en borrador hacia `main`. Último commit: `8da4333`, con
+el CI en verde. Nada quedó a medias en el código.
 
 ### Hecho
 
 | Paso | Qué | Commit |
 |---|---|---|
-| 1 | `identificacion.ts`: normalización, DV (Orden Administrativa 4 de 1989) y forma del número | `08921b6` |
-| 2 | Voz → conversación, duración real del Ogg (`voz/duracion-ogg.ts`), descarga por partes, límite de 1.000 en la transcripción, "Cancelar." con punto | `66380af` |
-| 3 | Botón "✅ Aprobar" (`a:<id>:<versión>`), trabajo `aprobar` en la cola, el "sí" ya no aprueba, autorización por usuario (`autorizado()`) y solo en chats privados | `b167ab5` |
-| 3b | Migración `20261103014907_aprobado_por` (`aprobado_por` BIGINT y `aprobado_en` TIMESTAMPTZ), aplicada en la base local | `7376a5d` |
-| 4 | Estado real tras un trabajo cortado (`estadoTrasFallo`, con `job.timestamp` y `aprobado_en`) | `f2ed97d` |
+| 1 | `identificacion.ts`: normalización, DV y forma del número | `08921b6` |
+| 2 | Voz → conversación, duración real del Ogg, descarga por partes, límite de 1.000 | `66380af` |
+| 3 | Botón "✅ Aprobar", trabajo `aprobar`, el "sí" no aprueba, autorización por usuario en chats privados | `b167ab5` |
+| 3b | Migración `aprobado_por` y `aprobado_en` | `7376a5d` |
+| 4 | Estado real tras un trabajo cortado | `f2ed97d` |
+| 4b | Borrador quieto (> 2 h) → se cancela y el mensaje empieza uno nuevo; su botón pide confirmar | `3827fae` |
+| 4c | Timeout de Ollama 240 s y "⏳ Sigo procesando…" a los 30 s | `09775e0` |
+| 4d | NIT/cédula normalizado en el resumen; DV o forma inválida → no aprobable | `0307317` |
+| — | Ítems que desaparecen en una corrección → no se guarda y se pregunta | `9318ac0` |
+| 5 | Set de evaluación (`pnpm eval:interprete`); línea base 7/8, f falla (bitácora 4.4) | `7acd575` |
+| — | Título "✅ Factura aprobada", tests de total = 0, zod 4.6.6 | `271c102`, `680dd99` |
+| 7a | Subagentes `control-calidad` (ok) y `seguridad`; ajustes y pendientes en §0 | `144f333`, `8da4333` |
 
-Verificación al cerrar el paso 4: lint sin warnings, Prettier, tsc, 263 tests unitarios y 14 de
-integración en verde. Las mutaciones confirmaron que los tests detectan: quitar la regla de chat
-privado, un "sí" que vuelva a aprobar, la regla del residuo 0 o 1 del DV y el id del borrador en la
-aprobación.
+Verificación: lint, Prettier, tsc, 295 tests unitarios y 17 de integración en verde.
 
 ### Pendiente, en orden
 
-1. **4b. Borradores pendientes viejos** (decisión 7, aprobada, §14.1): más de 2 horas sin cambios →
-   preguntar con dos botones (`n:<id>` nuevo, `c:<id>` corregir); el mensaje en espera en Redis
-   por 15 minutos; el botón Aprobar de un borrador viejo pide confirmar otra vez.
-2. **4c. Latencia** (decisión 8, aprobadas A y B, §14.2): timeout de Ollama de 120 a 240 s
-   (`interprete-texto.service.ts`, `AbortSignal.timeout`) y "⏳ Sigo procesando…" si un trabajo pasa
-   de 30 s. C (keep_alive más largo) no, por ahora.
-3. **Integrar `identificacion.ts`** en el borrador y el resumen (no tiene paso asignado en §10;
-   propuesta: 4d): DV en `BorradorFactura.cliente`, `problema` de forma o DV → no aprobable y
-   pregunta (§5, §5.1), advertencia de identificación por voz, cédula por voz no aprobable hasta
-   confirmarla por texto (decisión 3), documento extranjero según `esDocumentoExtranjero`. Requiere
-   saber si el borrador vino de voz: marcarlo en el trabajo o en `datos`.
-4. **5. Set de evaluación** (decisión 4, §7): `apps/api/eval/interprete/` con los 8 casos del
-   2026-10-15 y los nuevos (precios abreviados, cantidad × precio unitario), línea base con las
-   instrucciones actuales, y la **opción D** de la decisión 8 (en las correcciones, la IA devuelve
-   solo los cambios) medida en exactitud y tiempo. Detección en código de ítems menores a $1.000
-   (decisión 5: solo pregunta, no rechaza). Cualquier cambio a las instrucciones necesita la
-   aprobación de Gabriel.
-5. Detalle de §8: título "🧾 Factura aprobada" tras aprobar.
-6. **6. Prueba manual** con un guion de datos ficticios (botón, botón viejo, "sí", voz, reinicio).
-7. **7. Cierre:** subagentes `control-calidad` y `seguridad`, bitácora (README.es.md), estado en
-   los dos README y "Estado y plan" y "Arquitectura" del CLAUDE.md (hoy dice "aprobar con 'sí' por
-   regex": ya no es así). Después: auditoría externa, PR de la fase 4 listo para revisión, tag
-   `v0.4.0`.
+1. **Prueba manual** en Telegram con el guion ficticio de 9 pasos (NIT con DV correcto e
+   incorrecto, "quita", botón, título aprobado, borrador quieto envejecido con
+   `UPDATE borradores SET actualizado_en = now() - interval '3 hours' WHERE estado = 'PENDIENTE'`,
+   nota de voz, "cancelar"). Gabriel aún no la ha hecho.
+2. **Cierre:** resultado de la prueba en la bitácora (README.es.md, entrada 4.4), resumen corto en
+   README.md, "Estado y plan" del CLAUDE.md (incluida la línea de la fase 3.5: el total = 0 ya está).
+3. Auditoría externa (`docs/prompts/auditoria-seguridad.md`), PR #3 listo para revisión y tag
+   `v0.4.0` tras integrarlo.
 
 ### Detalles que una sesión nueva necesita
 
-- **Node 24:** anteponer al PATH la instalación de Node 24 de fnm (ruta en CLAUDE.local.md). Para la API en el panel de Terminal, un script de PowerShell que haga eso,
+- **Node 24:** anteponer al PATH la instalación de Node 24 de fnm (ruta en CLAUDE.local.md). Para
+  la API en el panel de Terminal, un script de PowerShell que haga eso,
   `Set-Location apps/api` y `pnpm run start:dev`.
 - **El worker arrancó** si Redis muestra una conexión `bull:bWVuc2FqZXM=` con `cmd=bzpopmin`
   (`redis-cli CLIENT LIST`).
