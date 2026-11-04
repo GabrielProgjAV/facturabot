@@ -94,7 +94,12 @@ export class VozNoAdmitidaError extends Error {
 
 /** Lo que el procesador necesita del exterior. TelegramService lo arma al arrancar. */
 export interface DependenciasProcesador {
-  responder(chatId: number, texto: string): Promise<RespuestaConversacion>;
+  /** @param porVoz el texto es la transcripción de una nota de voz. */
+  responder(
+    chatId: number,
+    texto: string,
+    porVoz?: boolean,
+  ): Promise<RespuestaConversacion>;
   aprobar(
     chatId: number,
     vista: VistaBorrador,
@@ -307,7 +312,7 @@ async function procesarVoz(
   // dictado no aprueba (decisión 1 de la 4.4): reenvía el resumen vigente con su botón.
   ctx.etapa = 'conversar';
   const respuesta = await conReintento(
-    () => deps.responder(chatId, texto),
+    () => deps.responder(chatId, texto, true),
     esConexionRechazada,
     ctx,
   );

@@ -268,7 +268,8 @@ describe('procesarMensaje: voz', () => {
     expect(deps.descargarVoz).toHaveBeenCalledWith('archivo-1');
     expect(deps.transcribir).toHaveBeenCalledWith(NOTA);
     // Sin vista: un "sí" dictado no aprueba (decisión 1 de la 4.4).
-    expect(deps.responder).toHaveBeenCalledWith(CHAT, 'vinilo 50 mil');
+    // El 3.er argumento marca que el texto viene de una nota de voz.
+    expect(deps.responder).toHaveBeenCalledWith(CHAT, 'vinilo 50 mil', true);
     expectEnviado(deps, '🎤 Entendí: "vinilo 50 mil"\n\nResumen');
     expect(deps.marcarMostrada).toHaveBeenCalledWith('b1', 2);
   });

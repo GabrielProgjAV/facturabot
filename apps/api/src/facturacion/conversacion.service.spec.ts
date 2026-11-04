@@ -210,6 +210,45 @@ describe('ConversacionService', () => {
       expect(prisma.borrador.update).toHaveBeenCalled();
     });
 
+    it('una nota de voz con la identificación la guarda marcada y el resumen advierte', async () => {
+      const { servicio, prisma, interprete } = crear(null);
+      interprete.interpretar.mockResolvedValueOnce({
+        ...borrador,
+        cliente: { nombre: 'Rosa', identificacion: '52111222' }, // cédula ficticia
+      });
+
+      const respuesta = await servicio.responder(42, 'factura a Rosa', true);
+
+      expect(prisma.borrador.create).toHaveBeenCalledWith({
+        data: {
+          chatId: 42n,
+          datos: expect.objectContaining({
+            cliente: {
+              nombre: 'Rosa',
+              identificacion: '52111222',
+              identificacionPorVoz: true,
+            },
+          }) as unknown,
+        },
+      });
+      expect(respuesta.texto).toContain(
+        'La identificación vino de una nota de voz',
+      );
+      // Solo advierte: el botón sigue.
+      expect(respuesta.mostrar?.aprobable).toBe(true);
+    });
+
+    it('el mismo mensaje escrito no lleva la marca ni la advertencia', async () => {
+      const { servicio, prisma } = crear(null);
+
+      const respuesta = await servicio.responder(42, 'factura a Ana');
+
+      expect(prisma.borrador.create).toHaveBeenCalledWith({
+        data: { chatId: 42n, datos: borrador },
+      });
+      expect(respuesta.texto).not.toContain('nota de voz');
+    });
+
     it('otro error al crear se propaga sin reintentar', async () => {
       const { servicio, prisma } = crear(null);
       prisma.borrador.create.mockRejectedValueOnce(new Error('sin conexión'));

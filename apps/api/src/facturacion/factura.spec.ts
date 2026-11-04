@@ -1,6 +1,7 @@
 import {
   type BorradorFactura,
   calcularTotales,
+  conOrigenDeIdentificacion,
   itemsQuitadosSinPedir,
   camposFaltantes,
   motivoNoAprobable,
@@ -273,5 +274,68 @@ describe('itemsQuitadosSinPedir (CLAUDE.md: un ítem que desaparece se pregunta)
       cantidad: 2,
       descripciones: [],
     });
+  });
+});
+
+describe('identificación dictada por voz (decisión 3 de la 4.4, solo advertencia)', () => {
+  const AVISO = 'La identificación vino de una nota de voz';
+  const ana = (identificacion: string | null, porVoz?: boolean) => ({
+    ...completo,
+    cliente: {
+      nombre: 'Ana',
+      identificacion,
+      ...(porVoz ? { identificacionPorVoz: true } : {}),
+    },
+  });
+
+  it('el resumen advierte, pero no bloquea la aprobación', () => {
+    const borrador = ana('52111222', true); // cédula ficticia
+
+    expect(resumenBorrador(borrador)).toContain(`⚠️ ${AVISO}`);
+    expect(resumenBorrador(borrador)).toContain('antes de aprobar');
+    expect(motivoNoAprobable(borrador)).toBeNull();
+  });
+
+  it('sin la marca, el resumen no advierte', () => {
+    expect(resumenBorrador(ana('52111222'))).not.toContain(AVISO);
+  });
+
+  it('un mensaje de voz que trae la identificación la marca', () => {
+    const marcado = conOrigenDeIdentificacion(undefined, ana('52111222'), true);
+
+    expect(marcado.cliente.identificacionPorVoz).toBe(true);
+  });
+
+  it('un texto que cambia la identificación quita la marca', () => {
+    const marcado = ana('52111222', true);
+
+    const corregido = conOrigenDeIdentificacion(
+      marcado,
+      ana('52111223'),
+      false,
+    );
+
+    expect(corregido.cliente.identificacionPorVoz).toBeUndefined();
+  });
+
+  it('si la identificación no cambia, conserva la marca anterior (voz o no)', () => {
+    const porVoz = ana('52111222', true);
+    const porTexto = ana('52111222');
+
+    expect(
+      conOrigenDeIdentificacion(porVoz, ana('52111222'), false).cliente
+        .identificacionPorVoz,
+    ).toBe(true);
+    expect(
+      conOrigenDeIdentificacion(porTexto, ana('52111222'), true).cliente
+        .identificacionPorVoz,
+    ).toBeUndefined();
+  });
+
+  it('una nota de voz sin identificación no marca nada', () => {
+    expect(
+      conOrigenDeIdentificacion(undefined, ana(null), true).cliente
+        .identificacionPorVoz,
+    ).toBeUndefined();
   });
 });

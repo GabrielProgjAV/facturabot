@@ -12,7 +12,12 @@ export interface ItemBorrador {
 
 /** Factura en construcción: lo que se sabe hasta ahora. null = todavía no se sabe. */
 export interface BorradorFactura {
-  cliente: { nombre: string | null; identificacion: string | null };
+  cliente: {
+    nombre: string | null;
+    identificacion: string | null;
+    /** La identificación actual la dictó el usuario en una nota de voz (Whisper pierde dígitos). */
+    identificacionPorVoz?: boolean;
+  };
   items: ItemBorrador[];
   /** Total escrito por el usuario, sin IVA. */
   totalEscrito: number | null;
@@ -77,6 +82,31 @@ export function identificacionCliente(
     identificacion,
     esDocumentoExtranjero(identificacion),
   );
+}
+
+/**
+ * Marca de dónde viene la identificación: si cambió con este mensaje, vino por voz o por texto
+ * según `porVoz`; si no cambió, conserva la marca anterior. La IA no ve la marca, así que se
+ * vuelve a poner aquí tras interpretar.
+ */
+export function conOrigenDeIdentificacion(
+  anterior: BorradorFactura | undefined,
+  nuevo: BorradorFactura,
+  porVoz: boolean,
+): BorradorFactura {
+  const { identificacion } = nuevo.cliente;
+  const cambio = identificacion !== (anterior?.cliente.identificacion ?? null);
+  const marca = cambio
+    ? porVoz
+    : (anterior?.cliente.identificacionPorVoz ?? false);
+  const { identificacionPorVoz: _descartada, ...cliente } = nuevo.cliente;
+  return {
+    ...nuevo,
+    cliente:
+      identificacion && marca
+        ? { ...cliente, identificacionPorVoz: true }
+        : cliente,
+  };
 }
 
 /** "quita", "elimina", "borra" y sus formas ("quítale", "bórralo"), pero no "borrador". */
@@ -157,6 +187,11 @@ export function resumenBorrador(
     );
   }
   if (id?.problema) lineas.push(`⚠️ ${id.problema}`);
+  if (borrador.cliente.identificacionPorVoz) {
+    lineas.push(
+      '⚠️ La identificación vino de una nota de voz: revisa que esté completa antes de aprobar.',
+    );
+  }
   if (sumaNoCuadra(borrador)) {
     lineas.push(
       '⚠️ Los productos no suman el total escrito. Revisa los valores o escribe "el total es …".',

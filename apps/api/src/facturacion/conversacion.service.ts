@@ -4,6 +4,7 @@ import type { Borrador } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import {
   type BorradorFactura,
+  conOrigenDeIdentificacion,
   type ItemsQuitados,
   itemsQuitadosSinPedir,
   motivoNoAprobable,
@@ -100,9 +101,11 @@ export class ConversacionService {
     });
   }
 
+  /** @param porVoz el texto es la transcripción de una nota de voz. */
   async responder(
     chatId: number,
     texto: string,
+    porVoz = false,
   ): Promise<RespuestaConversacion> {
     const pendiente = await this.buscarPendiente(chatId);
 
@@ -124,7 +127,7 @@ export class ConversacionService {
     }
 
     if (pendiente && quieto(pendiente)) {
-      const nuevo = await this.reemplazar(pendiente, texto);
+      const nuevo = await this.reemplazar(pendiente, texto, porVoz);
       const resumen = this.conResumen(nuevo, 'ninguno');
       const { nombre } = datosDe(pendiente).cliente;
       return {
@@ -134,8 +137,8 @@ export class ConversacionService {
     }
 
     const { fila, quitados } = pendiente
-      ? await this.corregir(pendiente, texto)
-      : await this.crear(chatId, texto);
+      ? await this.corregir(pendiente, texto, porVoz)
+      : await this.crear(chatId, texto, porVoz);
     const resumen = this.conResumen(fila, 'ninguno');
     if (!quitados) return resumen;
     // La corrección no se guardó: el resumen es el mismo que el usuario ya tenía.
@@ -279,9 +282,14 @@ export class ConversacionService {
   private async corregir(
     pendiente: Borrador,
     texto: string,
+    porVoz: boolean,
   ): Promise<Escritura> {
     const actual = datosDe(pendiente);
-    const borrador = await this.interprete.interpretar(texto, actual);
+    const borrador = conOrigenDeIdentificacion(
+      actual,
+      await this.interprete.interpretar(texto, actual),
+      porVoz,
+    );
     const quitados = itemsQuitadosSinPedir(actual, borrador, texto);
     if (quitados) {
       this.logger.warn(
@@ -300,8 +308,16 @@ export class ConversacionService {
    * Cancela un PENDIENTE quieto y crea uno nuevo con el mensaje, en una transacción: o pasan las
    * dos escrituras, o ninguna. Se interpreta antes: si la IA falla, el viejo sigue igual.
    */
-  private async reemplazar(viejo: Borrador, texto: string): Promise<Borrador> {
-    const borrador = await this.interprete.interpretar(texto, undefined);
+  private async reemplazar(
+    viejo: Borrador,
+    texto: string,
+    porVoz: boolean,
+  ): Promise<Borrador> {
+    const borrador = conOrigenDeIdentificacion(
+      undefined,
+      await this.interprete.interpretar(texto, undefined),
+      porVoz,
+    );
     return this.prisma.$transaction(async (tx) => {
       const { count } = await tx.borrador.updateMany({
         where: { id: viejo.id, estado: 'PENDIENTE', version: viejo.version },
@@ -319,8 +335,16 @@ export class ConversacionService {
     });
   }
 
-  private async crear(chatId: number, texto: string): Promise<Escritura> {
-    const borrador = await this.interprete.interpretar(texto, undefined);
+  private async crear(
+    chatId: number,
+    texto: string,
+    porVoz: boolean,
+  ): Promise<Escritura> {
+    const borrador = conOrigenDeIdentificacion(
+      undefined,
+      await this.interprete.interpretar(texto, undefined),
+      porVoz,
+    );
     try {
       const fila = await this.prisma.borrador.create({
         data: { chatId: BigInt(chatId), datos: aJson(borrador) },
@@ -342,7 +366,7 @@ export class ConversacionService {
       this.logger.warn(
         'P2002 al crear el borrador: se reinterpreta como corrección del PENDIENTE existente',
       );
-      return this.corregir(ganador, texto);
+      return this.corregir(ganador, texto, porVoz);
     }
   }
 

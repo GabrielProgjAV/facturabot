@@ -345,7 +345,8 @@ export class TelegramService
 
   private dependenciasProcesador(): DependenciasProcesador {
     return {
-      responder: (chatId, texto) => this.conversacion.responder(chatId, texto),
+      responder: (chatId, texto, porVoz) =>
+        this.conversacion.responder(chatId, texto, porVoz),
       aprobar: (chatId, vista, usuarioId) =>
         this.conversacion.aprobar(chatId, vista, usuarioId),
       marcarMostrada: (borradorId, version) =>
