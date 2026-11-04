@@ -1,4 +1,5 @@
 // Todos los NIT y cédulas de este archivo son ficticios.
+import { Logger } from '@nestjs/common';
 import { Prisma } from '../generated/prisma/client.js';
 import type { PrismaService } from '../prisma/prisma.service.js';
 import {
@@ -186,7 +187,7 @@ describe('ConversacionService', () => {
 
       expect(prisma.borrador.update).not.toHaveBeenCalled();
       expect(respuesta.texto).toMatch(
-        /^⚠️ Con tu corrección desaparecían 1 producto\(s\) \(brocha\)/,
+        /^⚠️ Con tu corrección desaparecían 1 producto\(s\), y tu mensaje no pide quitarlos por su nombre: brocha\./,
       );
       expect(respuesta.texto).toContain('No cambié el borrador');
       // El resumen es el mismo que ya tenía: misma versión, con su botón.
@@ -208,6 +209,87 @@ describe('ConversacionService', () => {
       await servicio.responder(42, 'quita la brocha');
 
       expect(prisma.borrador.update).toHaveBeenCalled();
+    });
+
+    it('"quita" sin nombrar el ítem que se va: no se guarda y se pregunta (hallazgo 4)', async () => {
+      const dos: BorradorFactura = {
+        ...borrador,
+        items: [...borrador.items, { descripcion: 'brocha', valor: 12000 }],
+      };
+      const { servicio, prisma, interprete } = crear(fila({ datos: dos }));
+      interprete.interpretar.mockResolvedValueOnce(borrador);
+
+      const respuesta = await servicio.responder(42, 'quita el rodillo');
+
+      expect(prisma.borrador.update).not.toHaveBeenCalled();
+      expect(respuesta.texto).toContain('no pide quitarlos por su nombre');
+    });
+
+    it('una corrección que cambia un valor que el mensaje no dice: no se guarda y se pregunta (hallazgo 5)', async () => {
+      const { servicio, prisma, interprete } = crear(fila());
+      interprete.interpretar.mockResolvedValueOnce({
+        ...borrador,
+        cliente: { nombre: 'Ana', identificacion: '124' }, // cédula ficticia
+        items: [{ descripcion: 'vinilo', valor: 55000 }], // la IA cambió el vinilo
+      });
+
+      const respuesta = await servicio.responder(42, 'el nit es 124');
+
+      expect(prisma.borrador.update).not.toHaveBeenCalled();
+      expect(respuesta.texto).toMatch(
+        /^⚠️ Con tu corrección, vinilo pasaba de \$\s50\.000 a \$\s55\.000, y tu mensaje no dice ese valor para ese producto\./,
+      );
+      expect(respuesta.texto).toContain('No cambié el borrador');
+      expect(respuesta.mostrar).toEqual({
+        borradorId: 'b1',
+        version: 1,
+        aprobable: true,
+      });
+    });
+
+    it('un ítem nuevo con un valor que el mensaje no dice: no se guarda y avisa que aparecía', async () => {
+      const { servicio, prisma, interprete } = crear(fila());
+      interprete.interpretar.mockResolvedValueOnce({
+        ...borrador,
+        items: [...borrador.items, { descripcion: 'brocha', valor: 12000 }],
+      });
+
+      const respuesta = await servicio.responder(42, 'agrega una brocha');
+
+      expect(prisma.borrador.update).not.toHaveBeenCalled();
+      expect(respuesta.texto).toMatch(
+        /^⚠️ Con tu corrección aparecía brocha con \$\s12\.000, y ese valor no está en tu mensaje\./,
+      );
+    });
+
+    it('si el mensaje dice el valor nuevo, la corrección se guarda', async () => {
+      const { servicio, prisma, interprete } = crear(fila());
+      interprete.interpretar.mockResolvedValueOnce({
+        ...borrador,
+        items: [{ descripcion: 'vinilo', valor: 55000 }],
+      });
+
+      await servicio.responder(42, 'el vinilo a 55 mil');
+
+      expect(prisma.borrador.update).toHaveBeenCalled();
+    });
+
+    it('los logs de una corrección descartada no llevan descripciones ni valores', async () => {
+      const { servicio, interprete } = crear(fila());
+      interprete.interpretar.mockResolvedValueOnce({
+        ...borrador,
+        items: [{ descripcion: 'vinilo', valor: 55000 }],
+      });
+      const warn = vi
+        .spyOn(Logger.prototype, 'warn')
+        .mockImplementation(() => undefined);
+
+      await servicio.responder(42, 'x');
+
+      expect(warn).toHaveBeenCalledWith(
+        'Corrección descartada: 0 ítems desaparecían y 1 valores cambiaban sin que el mensaje lo pidiera',
+      );
+      warn.mockRestore();
     });
 
     it('una nota de voz con la identificación la guarda marcada y el resumen advierte', async () => {

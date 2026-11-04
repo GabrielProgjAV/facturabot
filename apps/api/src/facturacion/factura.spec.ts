@@ -1,3 +1,4 @@
+// Todos los NIT, cédulas y documentos de este archivo son ficticios.
 import {
   type BorradorFactura,
   calcularTotales,
@@ -5,14 +6,17 @@ import {
   itemsQuitadosSinPedir,
   camposFaltantes,
   motivoNoAprobable,
+  pareceEmpresa,
   parsePesos,
   resumenBorrador,
   sumaNoCuadra,
   totalBase,
+  valoresCambiadosSinPedir,
+  valoresDelMensaje,
 } from './factura.js';
 
 const completo: BorradorFactura = {
-  cliente: { nombre: 'Acrílicos Ejemplo SAS', identificacion: '900123456' }, // NIT ficticio
+  cliente: { nombre: 'Acrílicos Ejemplo SAS', identificacion: '900123456-8' }, // NIT ficticio (DV 8)
   items: [
     { descripcion: '1 galón laca negra', valor: 78000 },
     { descripcion: '1/2 laca azul', valor: 45000 },
@@ -190,17 +194,68 @@ describe('identificación del cliente en el borrador (4.4 §5)', () => {
     expect(motivoNoAprobable(con('12345678901'))).toContain('Tiene 11 dígitos'); // ficticio
   });
 
+  /** Una persona natural: el nombre no tiene forma de empresa. */
+  const deAna = (identificacion: string): BorradorFactura => ({
+    ...completo,
+    cliente: { nombre: 'Ana Ejemplo', identificacion },
+  });
+
   it('cédula con puntos: aprobable, sin puntos en el resumen', () => {
-    const borrador = con('1.000.000.001'); // cédula ficticia
+    const borrador = deAna('1.000.000.001'); // cédula ficticia
 
     expect(motivoNoAprobable(borrador)).toBeNull();
     expect(resumenBorrador(borrador)).toMatch(/NIT\/CC: 1000000001$/m);
   });
 
   it('pasaporte: no se le aplican las reglas de forma ni de DV', () => {
-    const borrador = con('pasaporte AB123456'); // ficticio
+    const borrador = deAna('pasaporte AB123456'); // ficticio
 
     expect(motivoNoAprobable(borrador)).toBeNull();
+  });
+
+  it('"pasaporte" sin número: no aprobable (hallazgo 2)', () => {
+    expect(motivoNoAprobable(deAna('pasaporte'))).toBe(
+      'No encontré el número del documento.',
+    );
+  });
+
+  it('NIT de empresa sin DV: no aprobable, y el resumen lo pide (hallazgo 3)', () => {
+    const borrador = con('900000001'); // ficticio
+
+    expect(motivoNoAprobable(borrador)).toContain(
+      'Falta el dígito de verificación del NIT 900000001',
+    );
+    expect(resumenBorrador(borrador)).toContain('⚠️ Falta el dígito');
+  });
+
+  it('NIT con el DV pegado: no aprobable, pregunta si el último dígito es el DV (hallazgo 1)', () => {
+    expect(motivoNoAprobable(con('9000000012'))).toContain('900000001-2'); // ficticio
+  });
+
+  it.each([
+    // A este NIT de empresa (ficticio) le falta un dígito, y el DV escrito cuadra por azar con
+    // los 8 que quedan (DV de 90000001 = 5): solo el nombre lo delata.
+    ['90000001-5', 'tiene 8 dígitos'],
+    ['90000001', 'tiene 8 dígitos'],
+    ['1000000001', 'tiene 10 dígitos'],
+    ['pasaporte AB123456', 'no es un NIT'],
+  ])(
+    'empresa con "%s": no aprobable, pregunta (hallazgo 3)',
+    (identificacion, detalle) => {
+      expect(motivoNoAprobable(con(identificacion))).toBe(
+        `El cliente parece una empresa, pero su identificación ${detalle}: un NIT de empresa tiene 9 dígitos (desde 800.000.000) más el dígito de verificación. ¿Lo revisas?`,
+      );
+    },
+  );
+
+  it('la misma cédula de 8 dígitos con nombre de persona sí es aprobable', () => {
+    expect(motivoNoAprobable(deAna('90000001'))).toBeNull(); // ficticia
+  });
+
+  it('empresa con NIT de 600 a 799 millones (persona extranjera): pregunta', () => {
+    expect(motivoNoAprobable(con('600000000-7'))).toContain(
+      'parece una empresa',
+    ); // ficticio
   });
 
   it('sin identificación sigue diciendo que falta, no un problema de forma', () => {
@@ -226,6 +281,15 @@ describe('calcularTotales', () => {
   it('redondea el IVA a pesos', () => {
     expect(calcularTotales(1001).iva).toBe(190);
   });
+
+  it('redondea al peso más cercano, también hacia arriba', () => {
+    // 1003 × 0,19 = 190,57 → 191 (truncar daría 190).
+    expect(calcularTotales(1003)).toEqual({
+      subtotal: 1003,
+      iva: 191,
+      total: 1194,
+    });
+  });
 });
 
 describe('itemsQuitadosSinPedir (CLAUDE.md: un ítem que desaparece se pregunta)', () => {
@@ -245,9 +309,86 @@ describe('itemsQuitadosSinPedir (CLAUDE.md: un ítem que desaparece se pregunta)
     'quítale la azul',
     'elimina la laca azul',
     'borra la azul',
-    'bórrala',
-  ])('"%s" pide quitar: no es un problema', (mensaje) => {
+    'Quita la LACA AZÚL',
+  ])('"%s" pide quitar y la nombra: no es un problema', (mensaje) => {
     expect(itemsQuitadosSinPedir(completo, sinLaAzul, mensaje)).toBeNull();
+  });
+
+  it.each([
+    'bórrala', // no dice cuál
+    'quita la negra', // nombra otra
+    'quita la laca', // "laca" la tienen las tres: no distingue
+    'la azul ya no va', // nombra, pero no pide quitar (se pregunta de más)
+  ])(
+    '"%s": no nombra el ítem que se va o no pide quitarlo, pregunta (hallazgo 4)',
+    (mensaje) => {
+      expect(itemsQuitadosSinPedir(completo, sinLaAzul, mensaje)).toEqual({
+        cantidad: 1,
+        descripciones: ['1/2 laca azul'],
+      });
+    },
+  );
+
+  it('"quita la azul" no permite que se vaya también la amarilla (hallazgo 4)', () => {
+    const soloLaNegra: BorradorFactura = {
+      ...completo,
+      items: [completo.items[0]],
+    };
+
+    expect(
+      itemsQuitadosSinPedir(completo, soloLaNegra, 'quita la azul'),
+    ).toEqual({ cantidad: 2, descripciones: ['1/8 laca amarilla'] });
+    expect(
+      itemsQuitadosSinPedir(
+        completo,
+        soloLaNegra,
+        'quita la azul y la amarilla',
+      ),
+    ).toBeNull();
+  });
+
+  it('ítems repetidos: nombrar uno por una palabra compartida basta, porque no hay otra', () => {
+    const dosGalones: BorradorFactura = {
+      ...completo,
+      items: [
+        { descripcion: 'galón vinilo', valor: 40000 },
+        { descripcion: 'galón vinilo', valor: 40000 },
+      ],
+    };
+    const uno: BorradorFactura = {
+      ...dosGalones,
+      items: [dosGalones.items[0]],
+    };
+
+    expect(
+      itemsQuitadosSinPedir(dosGalones, uno, 'quita un galón de vinilo'),
+    ).toBeNull();
+  });
+
+  it('plural simple: "quita los galones" nombra "galón"', () => {
+    const conGalon: BorradorFactura = {
+      ...completo,
+      items: [
+        { descripcion: 'galón', valor: 40000 },
+        { descripcion: 'brocha', valor: 12000 },
+      ],
+    };
+    const sinGalon: BorradorFactura = {
+      ...conGalon,
+      items: [conGalon.items[1]],
+    };
+
+    expect(
+      itemsQuitadosSinPedir(conGalon, sinGalon, 'quita los galones'),
+    ).toBeNull();
+  });
+
+  it.each([
+    'no quites la azul',
+    'no le borres la azul',
+    'sin eliminar la azul',
+  ])('"%s" es una negación: no pide quitar, pregunta', (mensaje) => {
+    expect(itemsQuitadosSinPedir(completo, sinLaAzul, mensaje)).not.toBeNull();
   });
 
   it('"borrador" no cuenta como "borra"', () => {
@@ -338,4 +479,180 @@ describe('identificación dictada por voz (decisión 3 de la 4.4, solo advertenc
         .identificacionPorVoz,
     ).toBeUndefined();
   });
+});
+
+describe('valoresCambiadosSinPedir (hallazgo 5: un valor no mencionado no cambia en silencio)', () => {
+  const conAzul = (valor: number | null): BorradorFactura => ({
+    ...completo,
+    items: completo.items.map((i) =>
+      i.descripcion === '1/2 laca azul' ? { ...i, valor } : i,
+    ),
+  });
+
+  it('un ítem conservado que cambia a un valor que el mensaje no dice: se reporta', () => {
+    expect(
+      valoresCambiadosSinPedir(completo, conAzul(50000), 'el nit es 123'),
+    ).toEqual([
+      {
+        descripcion: '1/2 laca azul',
+        antes: 45000,
+        despues: 50000,
+        nuevo: false,
+      },
+    ]);
+  });
+
+  it.each([
+    'la azul a 50 mil',
+    'la azul vale 50.000',
+    'azul $50.000.',
+    'la azul a 50', // "50" también cuenta como 50 mil
+    'azul 50000',
+  ])('"%s": el valor nuevo aparece en el mensaje, no se reporta', (mensaje) => {
+    expect(valoresCambiadosSinPedir(completo, conAzul(50000), mensaje)).toEqual(
+      [],
+    );
+  });
+
+  it('un valor que se pierde (pasa a null) se reporta aunque el mensaje tenga números', () => {
+    expect(
+      valoresCambiadosSinPedir(completo, conAzul(null), 'el total es 96 mil'),
+    ).toEqual([
+      {
+        descripcion: '1/2 laca azul',
+        antes: 45000,
+        despues: null,
+        nuevo: false,
+      },
+    ]);
+  });
+
+  it('un valor que faltaba y el mensaje lo da: no se reporta; si no lo da, sí', () => {
+    const sinValor = conAzul(null);
+
+    expect(
+      valoresCambiadosSinPedir(sinValor, completo, 'la azul a 45 mil'),
+    ).toEqual([]);
+    expect(valoresCambiadosSinPedir(sinValor, completo, 'listo')).toHaveLength(
+      1,
+    );
+  });
+
+  it('sin cambios de valor, o con descripciones en otro formato de mayúsculas, no reporta', () => {
+    const otraLetra: BorradorFactura = {
+      ...completo,
+      items: completo.items.map((i) => ({
+        ...i,
+        descripcion: i.descripcion.toUpperCase(),
+      })),
+    };
+
+    expect(valoresCambiadosSinPedir(completo, completo, 'x')).toEqual([]);
+    expect(valoresCambiadosSinPedir(completo, otraLetra, 'x')).toEqual([]);
+  });
+
+  it('un valor dicho para otro ítem no le cambia el valor a la azul (el mensaje no la nombra)', () => {
+    expect(
+      valoresCambiadosSinPedir(completo, conAzul(78000), 'la negra a 78 mil'),
+    ).toHaveLength(1);
+    expect(
+      valoresCambiadosSinPedir(completo, conAzul(78000), 'la azul a 78 mil'),
+    ).toEqual([]);
+  });
+
+  it('un ítem nuevo con un valor que no está en el mensaje: se reporta como nuevo', () => {
+    const conBrocha: BorradorFactura = {
+      ...completo,
+      items: [...completo.items, { descripcion: 'brocha', valor: 12000 }],
+    };
+
+    expect(
+      valoresCambiadosSinPedir(completo, conBrocha, 'agrega una brocha'),
+    ).toEqual([
+      { descripcion: 'brocha', antes: null, despues: 12000, nuevo: true },
+    ]);
+    expect(
+      valoresCambiadosSinPedir(
+        completo,
+        conBrocha,
+        'agrega una brocha de 12 mil',
+      ),
+    ).toEqual([]);
+  });
+
+  it('descripción reescrita con otro valor: se reporta; con el mismo valor, no', () => {
+    const reescrita = (valor: number): BorradorFactura => ({
+      ...completo,
+      items: completo.items.map((i) =>
+        i.descripcion === '1/2 laca azul'
+          ? { descripcion: '1/2 galón laca azul', valor }
+          : i,
+      ),
+    });
+
+    expect(
+      valoresCambiadosSinPedir(completo, reescrita(60000), 'es de galón'),
+    ).toEqual([
+      {
+        descripcion: '1/2 galón laca azul',
+        antes: null,
+        despues: 60000,
+        nuevo: true,
+      },
+    ]);
+    expect(
+      valoresCambiadosSinPedir(completo, reescrita(45000), 'es de galón'),
+    ).toEqual([]);
+  });
+
+  it('el mismo valor en otro ítem del mensaje no basta si no es ese valor', () => {
+    expect(
+      valoresCambiadosSinPedir(completo, conAzul(46000), 'la negra a 45 mil'),
+    ).toHaveLength(1);
+  });
+});
+
+describe('valoresDelMensaje', () => {
+  it('lee pesos colombianos en sus formas habituales', () => {
+    const valores = valoresDelMensaje(
+      'negra 78.000, azul $45 mil, amarilla 1,5 mil y brocha 12000.',
+    );
+
+    expect([...valores]).toEqual(
+      expect.arrayContaining([78000, 45000, 1500, 12000]),
+    );
+  });
+
+  it('un número menor de mil cuenta también como miles', () => {
+    expect(valoresDelMensaje('a 80').has(80000)).toBe(true);
+    expect(valoresDelMensaje('a 80').has(80)).toBe(true);
+  });
+
+  it('sin números, vacío', () => {
+    expect(valoresDelMensaje('quita la azul').size).toBe(0);
+  });
+});
+
+describe('pareceEmpresa', () => {
+  it.each([
+    'Pinturas Sol SAS',
+    'Pinturas Sol S.A.S.',
+    'Acrílicos Ejemplo S.A.',
+    'Ferretería Ejemplo Ltda.',
+    'Comercial Ejemplo Limitada',
+    'Ejemplo E.U.',
+    'Ejemplo S. en C.',
+    'Pérez & Cía.',
+    'Pérez y Cía',
+    'Pinturas Ejemplo S.A.S. BIC',
+  ])('"%s" parece una empresa', (nombre) => {
+    expect(pareceEmpresa(nombre)).toBe(true);
+  });
+
+  it.each(['Ana', 'Rosa', 'Elsa', 'Marisa', 'Lucía', 'Pinturas Pepito', null])(
+    '"%s" no parece una empresa',
+    (nombre) => {
+      expect(pareceEmpresa(nombre)).toBe(false);
+    },
+  );
 });

@@ -14,7 +14,7 @@ const CHAT_B = 999000004; // chat ficticio
 const USUARIO = 999000006; // usuario ficticio que pulsa el botón
 
 const borrador: BorradorFactura = {
-  cliente: { nombre: 'Ferretería Ejemplo', identificacion: '900000001' }, // NIT ficticio
+  cliente: { nombre: 'Ferretería Ejemplo', identificacion: '900000001-2' }, // NIT ficticio (DV 2)
   items: [{ descripcion: 'vinilo', valor: 50000 }],
   totalEscrito: null,
 };
