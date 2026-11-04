@@ -59,17 +59,19 @@ describe('analizarIdentificacion: normalización', () => {
 
 describe('analizarIdentificacion: forma (solo reglas de fuentes oficiales)', () => {
   it.each([
-    ['900000001', 'nit_persona_juridica'],
-    ['800000002', 'nit_persona_juridica'],
-    ['999999999', 'nit_persona_juridica'],
-    ['600000000', 'nit_persona_extranjera'],
-    ['799999999', 'nit_persona_extranjera'],
+    // Todo NIT de 9 dígitos va con su DV (hallazgo 3): estos son los correctos.
+    ['900000001-2', 'nit_persona_juridica'],
+    ['800000002-7', 'nit_persona_juridica'],
+    ['999999999-4', 'nit_persona_juridica'],
+    ['600000000-7', 'nit_persona_extranjera'],
+    ['799999999-9', 'nit_persona_extranjera'],
     ['12345678', 'cedula_antigua'],
     ['1000001', 'cedula_antigua'],
     ['1000000001', 'cedula_nuip'],
     // No se restringe el primer dígito de una cédula de 10 dígitos (cupo desde 2.000.000.000 no
     // confirmado, ver el plan): no se pregunta.
     ['2000000001', 'cedula_nuip'],
+    ['5999999999', 'cedula_nuip'],
   ])('%s → %s, sin problema', (numero, forma) => {
     const resultado = analizarIdentificacion(numero);
 
@@ -138,14 +140,34 @@ describe('analizarIdentificacion: dígito de verificación', () => {
     expect(analizarIdentificacion('12345678-3').dvVerificado).toBe(false);
   });
 
-  it('sin DV: se calcula para mostrarlo, pero no se inventa como escrito', () => {
+  it('NIT sin DV: no se inventa como escrito, y se pide sin decir cuál es (hallazgo 3)', () => {
     const resultado = analizarIdentificacion('900000001');
 
     expect(resultado.dv).toBeNull();
     expect(resultado.dvCalculado).toBe('2');
     expect(resultado.dvVerificado).toBeNull();
-    expect(resultado.problema).toBeNull();
+    expect(resultado.problema).toBe(
+      'Falta el dígito de verificación del NIT 900000001. Escríbelo después de un guion (900000001-…).',
+    );
   });
+
+  it.each(['600000000', '799999999', '800000002', '999999999'])(
+    'NIT %s (rango 600 a 999 millones) sin DV: lo pide',
+    (numero) => {
+      expect(analizarIdentificacion(numero).problema).toContain(
+        'Falta el dígito de verificación',
+      );
+    },
+  );
+
+  it.each(['599999999', '12345678', '1000000001'])(
+    '%s no es un NIT de 9 dígitos: no pide DV',
+    (numero) => {
+      expect(analizarIdentificacion(numero).problema ?? '').not.toContain(
+        'Falta el dígito',
+      );
+    },
+  );
 
   it('10 dígitos con DV: no verificable (peso de la décima posición no confirmado), sin problema', () => {
     const resultado = analizarIdentificacion('1000000001-4');
@@ -163,6 +185,83 @@ describe('analizarIdentificacion: dígito de verificación', () => {
     expect(resultado.forma).toBe('desconocida');
     expect(resultado.problema).toContain('9 dígitos');
   });
+});
+
+describe('NIT con el DV pegado o separado (hallazgo 1)', () => {
+  it.each([
+    ['900000001 2', '900000001-2'],
+    ['900.000.001.2', '900000001-2'],
+    ['900,000,001,2', '900000001-2'],
+    ['NIT 900 000 001 2', '900000001-2'],
+    // Un DV equivocado tampoco pasa: también se pregunta (el código no lo corrige).
+    ['900000001 5', '900000001-5'],
+    // Cédula de 8 dígitos con el DV de su NIT separado por un punto.
+    ['12.345.678.8', '12345678-8'],
+  ])('"%s": pregunta si el último dígito es el DV', (texto, sugerido) => {
+    const resultado = analizarIdentificacion(texto);
+
+    expect(resultado.forma).toBe('desconocida');
+    expect(resultado.problema).toMatch(
+      /^¿El último \d es el dígito de verificación\?/,
+    );
+    expect(resultado.problema).toContain(sugerido);
+  });
+
+  it.each(['9000000012', '6000000007', '7999999999', '8000000027'])(
+    '"%s" (10 dígitos que empiezan por 6 a 9): no aprobable, pregunta',
+    (texto) => {
+      const resultado = analizarIdentificacion(texto);
+
+      expect(resultado.forma).toBe('desconocida');
+      expect(resultado.problema).toContain(
+        'Tiene 10 dígitos y empieza como un NIT',
+      );
+    },
+  );
+
+  it('"9000000012": propone el NIT con su DV separado, con los dígitos que escribió', () => {
+    expect(analizarIdentificacion('9000000012').problema).toBe(
+      'Tiene 10 dígitos y empieza como un NIT. Si es el NIT 900000001 con dígito de verificación 2, escríbelo con guion: 900000001-2. Si es una cédula, revisa el número.',
+    );
+  });
+
+  it.each(['0900000001', '0900000001-5'])(
+    '"%s" (10 dígitos que empiezan por 0): no es un NUIP, pregunta',
+    (texto) => {
+      const resultado = analizarIdentificacion(texto);
+
+      expect(resultado.forma).toBe('desconocida');
+      expect(resultado.problema).toBe(
+        'Tiene 10 dígitos y empieza por 0: no coincide con una cédula ni con un NIT. ¿Lo revisas?',
+      );
+    },
+  );
+
+  it.each(['NIT 90000001', 'nit: 12345678', 'N.I.T. 1000000001'])(
+    '"%s": quien escribe "NIT" sin DV, con cualquier longitud, debe darlo (hallazgo 3)',
+    (texto) => {
+      expect(analizarIdentificacion(texto).problema).toContain(
+        'Falta el dígito de verificación del NIT',
+      );
+    },
+  );
+
+  it('"NIT 12345678-8": NIT de persona natural con su DV correcto, sin problema', () => {
+    expect(analizarIdentificacion('NIT 12345678-8').problema).toBeNull();
+  });
+
+  it('10 dígitos que empiezan por 6 a 9 con DV: tampoco pasa', () => {
+    expect(analizarIdentificacion('9000000012-3').problema).toBe(
+      'Tiene 10 dígitos y empieza como un NIT; un NIT tiene 9 más el dígito de verificación. ¿Lo revisas?',
+    );
+  });
+
+  it.each(['1.000.000.001', '12.345.678', '1 000 000 001', '900.000.001-2'])(
+    '"%s": grupos de miles normales, no pregunta por un DV suelto',
+    (texto) => {
+      expect(analizarIdentificacion(texto).problema).toBeNull();
+    },
+  );
 });
 
 describe('documentos extranjeros', () => {
@@ -201,4 +300,74 @@ describe('documentos extranjeros', () => {
     // 11 dígitos serían un problema para una cédula colombiana, no para un pasaporte.
     expect(analizarIdentificacion('12345678901', true).problema).toBeNull();
   });
+
+  it.each([
+    ['pasaporte AB123456', 'AB123456'],
+    ['Pasaporte No. AB123456', 'AB123456'],
+    ['CE: 123456', '123456'],
+    ['C.E. 654321', '654321'],
+    ['cédula de extranjería # 123456', '123456'],
+    ['PEP 123456789012345', '123456789012345'],
+  ])(
+    '"%s": quita el nombre del documento y deja el número %s',
+    (texto, numero) => {
+      const resultado = analizarIdentificacion(texto, true);
+
+      expect(resultado.numero).toBe(numero);
+      expect(resultado.problema).toBeNull();
+    },
+  );
+
+  it.each([
+    'pasaporte',
+    'PEP',
+    'PPT',
+    'cédula de extranjería',
+    'pasaporte No.',
+  ])('"%s" sin número: lo pide (hallazgo 2)', (texto) => {
+    expect(analizarIdentificacion(texto, true).problema).toBe(
+      'No encontré el número del documento.',
+    );
+  });
+
+  it.each([
+    'CE 900000001',
+    'PPT 9000000012',
+    'pasaporte 900.000.001 2',
+    'CE 600000000',
+    'CE 12.345.678.8',
+  ])('"%s": número con forma de NIT sin guion, pregunta cuál es', (texto) => {
+    expect(analizarIdentificacion(texto, true).problema).toContain(
+      'el número tiene forma de NIT. ¿Cuál es?',
+    );
+  });
+
+  it.each([
+    'pasaporte AB',
+    'PEP 1234',
+    'pasaporte ABCDEF',
+    'pasaporte AB#123456',
+  ])(
+    '"%s": número que no se entiende (menos de 5, sin dígitos o con símbolos), pregunta',
+    (texto) => {
+      expect(analizarIdentificacion(texto, true).problema).toContain(
+        'No entiendo el número del documento extranjero',
+      );
+    },
+  );
+
+  it.each([
+    'CE: 900000001-9',
+    'CE 900.000.001-2',
+    'pasaporte 12345678-8',
+    'pasaporte NIT 900000001',
+  ])(
+    '"%s": forma de NIT con DV, pregunta cuál es en vez de saltarse el DV (hallazgo 2)',
+    (texto) => {
+      expect(esDocumentoExtranjero(texto)).toBe(true);
+      expect(analizarIdentificacion(texto, true).problema).toContain(
+        'tiene forma de NIT con dígito de verificación',
+      );
+    },
+  );
 });
