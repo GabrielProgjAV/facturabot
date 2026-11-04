@@ -135,11 +135,12 @@ Ollama debe estar corriendo con el modelo oficial descargado.
 ## Estado y plan
 
 - ✅ Fases 0–3: validación, base, bot eco en Telegram y factura por texto (tags `v0.1.0`–`v0.3.0`).
-- ✅ Fase 4 voz (`feat/fase-4-voz`, PR #3 listo para revisión; tag `v0.4.0` tras integrarlo): 4.1 Whisper,
+- ✅ Fase 4 voz (`feat/fase-4-voz`, PR #3 listo para revisión, a la espera de la auditoría externa; tag `v0.4.0` tras integrarlo): 4.1 Whisper,
   4.2 transcripción, 4.3 cola BullMQ, 4.4 voz → borradores con aprobación solo con botón. Alcance y
   pendientes en §0 de `docs/planes/fase-4.4-voz-borradores.md`; bitácora en `README.es.md`.
-- **Antes de Alegra (fase 6):** auditoría externa independiente (`docs/prompts/auditoria-seguridad.md`);
-  validar con Zod el JSON de `datos` leído de la BD; detectar un ítem reemplazado (caso f del set de
+- **Auditoría externa independiente** (`docs/prompts/auditoria-seguridad.md`): antes de integrar el PR de
+  la fase 4 y antes de empezar la fase 6. Aún no se ha hecho.
+- **Antes de Alegra (fase 6):** validar con Zod el JSON de `datos` leído de la BD; detectar un ítem reemplazado (caso f del set de
   evaluación); PR aparte: `OLLAMA_MODELO_TEXTO` por defecto a `qwen2.5:7b`; test e2e. (El total = 0 y
   el dígito de verificación ya están hechos.)
 - **Antes de más usuarios:** bloquear la aprobación si la identificación vino de voz (hoy solo

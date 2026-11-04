@@ -503,7 +503,7 @@ Verificación: lint, Prettier, tsc, 295 tests unitarios y 17 de integración en 
    dictada salió con botón y sin advertencia → advertencia agregada (`fb87d20`).
 2. ✅ **Cierre:** bitácora, estado en los README y "Estado y plan" del CLAUDE.md.
 3. Gabriel integra el PR #3 (*squash*) y después se crea el tag anotado `v0.4.0` sobre el commit de
-   `main`. La auditoría externa va antes de la fase 6.
+   `main`. La auditoría externa (aún sin hacer) va antes de integrar el PR y antes de la fase 6.
 
 ### Detalles que una sesión nueva necesita
 
