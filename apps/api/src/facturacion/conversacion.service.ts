@@ -8,7 +8,10 @@ import {
   type ItemsQuitados,
   itemsQuitadosSinPedir,
   motivoNoAprobable,
+  pesos,
   resumenBorrador,
+  type ValorCambiado,
+  valoresCambiadosSinPedir,
 } from './factura.js';
 import { InterpreteTextoService } from './interprete-texto.service.js';
 
@@ -63,10 +66,16 @@ export interface RespuestaConversacion {
   mostrar?: VistaBorrador & { aprobable: boolean };
 }
 
-/** El borrador tras crear o corregir; con `quitados`, la corrección no se guardó. */
+/** Lo que una corrección cambiaba sin que el mensaje lo pidiera; por eso no se guardó. */
+interface CambiosSinPedir {
+  quitados: ItemsQuitados | null;
+  valores: ValorCambiado[];
+}
+
+/** El borrador tras crear o corregir; con `descartada`, la corrección no se guardó. */
 interface Escritura {
   fila: Borrador;
-  quitados: ItemsQuitados | null;
+  descartada: CambiosSinPedir | null;
 }
 
 /** Qué decirle al usuario debajo del resumen. */
@@ -136,18 +145,15 @@ export class ConversacionService {
       };
     }
 
-    const { fila, quitados } = pendiente
+    const { fila, descartada } = pendiente
       ? await this.corregir(pendiente, texto, porVoz)
       : await this.crear(chatId, texto, porVoz);
     const resumen = this.conResumen(fila, 'ninguno');
-    if (!quitados) return resumen;
+    if (!descartada) return resumen;
     // La corrección no se guardó: el resumen es el mismo que el usuario ya tenía.
-    const cuales = quitados.descripciones.length
-      ? ` (${quitados.descripciones.join(', ')})`
-      : '';
     return {
       ...resumen,
-      texto: `⚠️ Con tu corrección desaparecían ${quitados.cantidad} producto(s)${cuales}, y tu mensaje no dice que los quite. No cambié el borrador: si querías quitarlos, escribe "quita …"; si no, escribe la corrección de nuevo.\n\n${resumen.texto}`,
+      texto: `${avisoDescartada(descartada)}\n\n${resumen.texto}`,
     };
   }
 
@@ -278,7 +284,10 @@ export class ConversacionService {
     };
   }
 
-  /** Si la IA hizo desaparecer ítems que el mensaje no pidió quitar, no guarda nada. */
+  /**
+   * Si la IA hizo desaparecer ítems que el mensaje no nombró, o cambió valores que el mensaje no
+   * dice, no guarda nada: se pregunta (CLAUDE.md: nunca se corrige en silencio).
+   */
   private async corregir(
     pendiente: Borrador,
     texto: string,
@@ -291,17 +300,19 @@ export class ConversacionService {
       porVoz,
     );
     const quitados = itemsQuitadosSinPedir(actual, borrador, texto);
-    if (quitados) {
+    const valores = valoresCambiadosSinPedir(actual, borrador, texto);
+    if (quitados || valores.length > 0) {
+      // Solo cantidades: nunca descripciones ni valores en los logs (Ley 1581 de 2012).
       this.logger.warn(
-        `Corrección descartada: desaparecían ${quitados.cantidad} ítems sin que el mensaje lo pidiera`,
+        `Corrección descartada: ${quitados?.cantidad ?? 0} ítems desaparecían y ${valores.length} valores cambiaban sin que el mensaje lo pidiera`,
       );
-      return { fila: pendiente, quitados };
+      return { fila: pendiente, descartada: { quitados, valores } };
     }
     const fila = await this.prisma.borrador.update({
       where: { id: pendiente.id },
       data: { datos: aJson(borrador), version: { increment: 1 } },
     });
-    return { fila, quitados: null };
+    return { fila, descartada: null };
   }
 
   /**
@@ -349,7 +360,7 @@ export class ConversacionService {
       const fila = await this.prisma.borrador.create({
         data: { chatId: BigInt(chatId), datos: aJson(borrador) },
       });
-      return { fila, quitados: null };
+      return { fila, descartada: null };
     } catch (err) {
       // El índice único parcial detectó un PENDIENTE que no vimos al leer (otra copia del bot
       // o un cambio manual en la base). Se mira solo el code: `meta.target` no viene relleno
@@ -375,6 +386,28 @@ export class ConversacionService {
       where: { chatId: BigInt(chatId), estado: 'PENDIENTE' },
     });
   }
+}
+
+/** Qué cambiaba la corrección sin pedirlo, y cómo pedirlo si era lo que se quería. */
+function avisoDescartada({ quitados, valores }: CambiosSinPedir): string {
+  const lineas: string[] = [];
+  if (quitados) {
+    const cuales = quitados.descripciones.length
+      ? `: ${quitados.descripciones.join(', ')}`
+      : '';
+    lineas.push(
+      `⚠️ Con tu corrección desaparecían ${quitados.cantidad} producto(s), y tu mensaje no pide quitarlos por su nombre${cuales}.`,
+    );
+  }
+  for (const v of valores) {
+    lineas.push(
+      `⚠️ Con tu corrección, ${v.descripcion} pasaba de ${pesos(v.antes)} a ${pesos(v.despues)}, y ese valor no está en tu mensaje.`,
+    );
+  }
+  lineas.push(
+    'No cambié el borrador. Si eso era lo que querías, escríbelo con el nombre del producto (por ejemplo, "quita la brocha" o "la brocha a 15 mil"); si no, escribe la corrección de nuevo.',
+  );
+  return lineas.join('\n');
 }
 
 function quieto(fila: Borrador): boolean {

@@ -4,6 +4,18 @@ import {
   type Identificacion,
 } from './identificacion.js';
 
+/**
+ * Nombre que termina en un tipo de sociedad: S.A.S., S.A., Ltda., E.U., S. en C., S.C.A., "& Cía.".
+ * Solo al final del nombre, para no confundir "Rosa" o "Elsa" con "S.A.".
+ */
+const NOMBRE_DE_EMPRESA =
+  /(?:(?:^|[\s,.])(?:s\.?\s?a\.?\s?s|s\.?\s?a|ltda|limitada|e\.?\s?u|s\.?\s?c\.?\s?a|s\.?\s?en\s?c(?:\.?\s?s|\.?\s?a)?)|(?:&|\by)\s*c[ií]a)\.?\s*$/i;
+
+/** true si el nombre del cliente tiene la forma de una persona jurídica (p. ej. "Pinturas Sol SAS"). */
+export function pareceEmpresa(nombre: string | null): boolean {
+  return nombre !== null && NOMBRE_DE_EMPRESA.test(nombre.trim());
+}
+
 /** Línea de la factura tal como la entendimos (valor = total de la línea, sin IVA). */
 export interface ItemBorrador {
   descripcion: string;
@@ -76,12 +88,28 @@ export function sumaNoCuadra(borrador: BorradorFactura): boolean {
 export function identificacionCliente(
   borrador: BorradorFactura,
 ): Identificacion | null {
-  const { identificacion } = borrador.cliente;
+  const { identificacion, nombre } = borrador.cliente;
   if (!identificacion) return null;
-  return analizarIdentificacion(
+  const id = analizarIdentificacion(
     identificacion,
     esDocumentoExtranjero(identificacion),
   );
+  // Un NIT de empresa al que le falta un dígito tiene la forma de una cédula antigua: solo el
+  // nombre lo delata (hallazgo 3 de la auditoría del PR #3). Se pregunta, no se corrige.
+  if (
+    !id.problema &&
+    pareceEmpresa(nombre) &&
+    id.forma !== 'nit_persona_juridica'
+  ) {
+    const digitos = /^\d+$/.test(id.numero)
+      ? `tiene ${id.numero.length} dígitos`
+      : 'no es un NIT';
+    return {
+      ...id,
+      problema: `El cliente parece una empresa, pero su identificación ${digitos}: un NIT de empresa tiene 9 dígitos (desde 800.000.000) más el dígito de verificación. ¿Lo revisas?`,
+    };
+  }
+  return id;
 }
 
 /**
@@ -112,33 +140,167 @@ export function conOrigenDeIdentificacion(
 /** "quita", "elimina", "borra" y sus formas ("quítale", "bórralo"), pero no "borrador". */
 const PIDE_QUITAR = /\b(?:qu[ií]t|elimin|b[oó]rr(?!ador))/i;
 
+/** Palabras que no distinguen un producto de otro. */
+const PALABRAS_VACIAS = new Set([
+  'del',
+  'las',
+  'los',
+  'con',
+  'por',
+  'para',
+  'una',
+  'uno',
+  'unos',
+  'unas',
+  'que',
+]);
+
+/** Minúsculas y sin tildes, para comparar descripciones. */
+function normalizar(texto: string): string {
+  return texto.normalize('NFD').replace(/\p{M}/gu, '').trim().toLowerCase();
+}
+
+/** Palabras con las que se puede nombrar un producto: 3 letras o más, sin números sueltos. */
+function palabras(texto: string): string[] {
+  return normalizar(texto)
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter(
+      (p) => p.length >= 3 && !/^\d+$/.test(p) && !PALABRAS_VACIAS.has(p),
+    );
+}
+
+/** La misma palabra, en singular o plural simple ("galón" y "galones"). */
+function mismaPalabra(a: string, b: string): boolean {
+  return (
+    [a, `${a}s`, `${a}es`].includes(b) || [b, `${b}s`, `${b}es`].includes(a)
+  );
+}
+
+/**
+ * true si el mensaje nombra el ítem: alguna de sus palabras que no tengan los demás ítems
+ * ("blanco" entre "galón blanco" y "galón azul"); si no tiene ninguna propia, cualquiera.
+ */
+function nombraItem(
+  item: ItemBorrador,
+  todos: ItemBorrador[],
+  palabrasMensaje: string[],
+): boolean {
+  const suyas = palabras(item.descripcion);
+  const deOtros = todos
+    .filter((otro) => otro !== item)
+    .flatMap((otro) => palabras(otro.descripcion));
+  const propias = suyas.filter((p) => !deOtros.some((o) => mismaPalabra(o, p)));
+  const candidatas = propias.length > 0 ? propias : suyas;
+  return candidatas.some((p) =>
+    palabrasMensaje.some((m) => mismaPalabra(m, p)),
+  );
+}
+
+/**
+ * Empareja los ítems de antes con los de después por descripción (sin tildes ni mayúsculas).
+ * Cada ítem de después se usa una sola vez, para que dos "vinilo" no cuenten como uno.
+ */
+function emparejar(
+  antes: ItemBorrador[],
+  despues: ItemBorrador[],
+): { pares: [ItemBorrador, ItemBorrador][]; faltan: ItemBorrador[] } {
+  const libres = [...despues];
+  const pares: [ItemBorrador, ItemBorrador][] = [];
+  const faltan: ItemBorrador[] = [];
+  for (const item of antes) {
+    const i = libres.findIndex(
+      (d) => normalizar(d.descripcion) === normalizar(item.descripcion),
+    );
+    if (i === -1) faltan.push(item);
+    else
+      pares.push([item, ...libres.splice(i, 1)] as [
+        ItemBorrador,
+        ItemBorrador,
+      ]);
+  }
+  return { pares, faltan };
+}
+
 export interface ItemsQuitados {
   cantidad: number;
-  /** Las que ya no aparecen; vacía si la IA reescribió alguna y no se sabe cuáles se fueron. */
+  /**
+   * Los que se iban sin que el mensaje los nombrara; vacía si la IA reescribió alguna descripción
+   * y no se sabe cuáles se fueron.
+   */
   descripciones: string[];
 }
 
 /**
  * Ítems que una corrección hizo desaparecer sin que el mensaje lo pidiera, o null si no hay.
  * La IA a veces "olvida" productos al devolver el borrador completo (CLAUDE.md: un ítem que
- * desaparece se pregunta, nunca se deja pasar en silencio).
- * Límite conocido: solo mira la cantidad. Si la IA reemplaza un ítem por otro (caso f del set de
- * evaluación), no se detecta; tampoco reconoce "saca" o "ya no va" como pedido de quitar.
+ * desaparece se pregunta, nunca se deja pasar en silencio). Para quitarlo, el mensaje tiene que
+ * pedirlo ("quita", "elimina", "borra") y nombrar cada ítem que se va (hallazgo 4 de la auditoría
+ * del PR #3): "quita la brocha" no permite que desaparezca también el vinilo.
+ * Límite conocido: si la IA reemplaza un ítem por otro (caso f del set de evaluación), no se
+ * detecta; tampoco reconoce "saca" o "ya no va" como pedido de quitar (se pregunta de más).
  */
 export function itemsQuitadosSinPedir(
   antes: BorradorFactura,
   despues: BorradorFactura,
   mensaje: string,
 ): ItemsQuitados | null {
-  if (despues.items.length >= antes.items.length || PIDE_QUITAR.test(mensaje))
-    return null;
-  const normalizar = (texto: string) => texto.trim().toLowerCase();
-  const quedan = new Set(despues.items.map((i) => normalizar(i.descripcion)));
+  if (despues.items.length >= antes.items.length) return null;
   const cantidad = antes.items.length - despues.items.length;
-  const faltan = antes.items
-    .map((i) => i.descripcion)
-    .filter((d) => !quedan.has(normalizar(d)));
-  return { cantidad, descripciones: faltan.length === cantidad ? faltan : [] };
+  const { faltan } = emparejar(antes.items, despues.items);
+  // Si faltan más de los que se fueron, la IA reescribió alguno: no se sabe cuáles se quitaron.
+  if (faltan.length !== cantidad) return { cantidad, descripciones: [] };
+  const pide = PIDE_QUITAR.test(mensaje);
+  const palabrasMensaje = palabras(mensaje);
+  const sinNombrar = faltan.filter(
+    (item) => !pide || !nombraItem(item, antes.items, palabrasMensaje),
+  );
+  if (sinNombrar.length === 0) return null;
+  return { cantidad, descripciones: sinNombrar.map((i) => i.descripcion) };
+}
+
+/** Un ítem que se conservó con otro valor. */
+export interface ValorCambiado {
+  descripcion: string;
+  antes: number | null;
+  despues: number | null;
+}
+
+/**
+ * Valores en pesos que aparecen en el mensaje. "80" cuenta también como 80.000, porque así se
+ * habla ("la azul a 80"). Lo que no se entiende no cuenta: se pregunta de más, nunca de menos.
+ */
+export function valoresDelMensaje(mensaje: string): Set<number> {
+  const valores = new Set<number>();
+  for (const [texto] of mensaje.matchAll(/\d[\d.,]*(?:\s*mil\b)?/gi)) {
+    const valor = parsePesos(texto.replace(/[.,]+$/, ''));
+    if (valor === null) continue;
+    valores.add(valor);
+    if (!/mil$/i.test(texto) && valor < 1000) valores.add(valor * 1000);
+  }
+  return valores;
+}
+
+/**
+ * Ítems que la corrección conservó pero con otro valor que el mensaje no dice (hallazgo 5 de la
+ * auditoría del PR #3). La IA devuelve el borrador completo y puede cambiar un valor que nadie
+ * mencionó; un valor que se pierde (pasa a null) también se pregunta.
+ */
+export function valoresCambiadosSinPedir(
+  antes: BorradorFactura,
+  despues: BorradorFactura,
+  mensaje: string,
+): ValorCambiado[] {
+  const enMensaje = valoresDelMensaje(mensaje);
+  return emparejar(antes.items, despues.items)
+    .pares.filter(
+      ([a, d]) =>
+        a.valor !== d.valor && (d.valor === null || !enMensaje.has(d.valor)),
+    )
+    .map(([a, d]) => ({
+      descripcion: d.descripcion,
+      antes: a.valor,
+      despues: d.valor,
+    }));
 }
 
 /** Por qué no se puede aprobar todavía, o null si está lista para aprobar. */
@@ -153,11 +315,16 @@ export function motivoNoAprobable(borrador: BorradorFactura): string | null {
   return null;
 }
 
-const pesos = new Intl.NumberFormat('es-CO', {
+const formatoPesos = new Intl.NumberFormat('es-CO', {
   style: 'currency',
   currency: 'COP',
   maximumFractionDigits: 0,
 });
+
+/** "$ 78.000" para mostrar al usuario; "❓" si no hay valor. */
+export function pesos(valor: number | null): string {
+  return valor === null ? '❓' : formatoPesos.format(valor);
+}
 
 /** Mensaje para el usuario con lo entendido, lo que falta y los totales con IVA. */
 export function resumenBorrador(
@@ -172,8 +339,7 @@ export function resumenBorrador(
     titulo,
     `Cliente: ${nombre ?? '❓'} · NIT/CC: ${numero ?? borrador.cliente.identificacion ?? '❓'}`,
     ...borrador.items.map(
-      (item) =>
-        `• ${item.descripcion}: ${item.valor === null ? '❓' : pesos.format(item.valor)}`,
+      (item) => `• ${item.descripcion}: ${pesos(item.valor)}`,
     ),
   ];
 
@@ -181,9 +347,9 @@ export function resumenBorrador(
   if (base) {
     const { subtotal, iva, total } = calcularTotales(base);
     lineas.push(
-      `Subtotal: ${pesos.format(subtotal)}`,
-      `IVA 19 %: ${pesos.format(iva)}`,
-      `Total a pagar: ${pesos.format(total)}`,
+      `Subtotal: ${pesos(subtotal)}`,
+      `IVA 19 %: ${pesos(iva)}`,
+      `Total a pagar: ${pesos(total)}`,
     );
   }
   if (id?.problema) lineas.push(`⚠️ ${id.problema}`);
