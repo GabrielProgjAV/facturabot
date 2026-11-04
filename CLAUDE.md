@@ -135,19 +135,29 @@ Ollama debe estar corriendo con el modelo oficial descargado.
 ## Estado y plan
 
 - ✅ Fases 0–3: validación, base, bot eco en Telegram y factura por texto (tags `v0.1.0`–`v0.3.0`).
-- ✅ Fase 4 voz (`feat/fase-4-voz`, PR #3 listo para revisión, a la espera de la auditoría externa; tag `v0.4.0` tras integrarlo): 4.1 Whisper,
+- ✅ Fase 4 voz (`feat/fase-4-voz`, PR #3 listo para revisión, auditoría externa hecha; tag `v0.4.0` tras integrarlo): 4.1 Whisper,
   4.2 transcripción, 4.3 cola BullMQ, 4.4 voz → borradores con aprobación solo con botón. Alcance y
   pendientes en §0 de `docs/planes/fase-4.4-voz-borradores.md`; bitácora en `README.es.md`.
 - **Auditoría externa independiente** (`docs/prompts/auditoria-seguridad.md`), obligatoria en dos
-  momentos: (1) antes de integrar el PR #3 de la fase 4 (esperada el 2026-11-04) y (2) **antes de usar
+  momentos: (1) antes de integrar el PR #3 de la fase 4 (hecha el 2026-11-04: recomienda integrar, sin bloqueantes) y (2) **antes de usar
   el token de producción de Alegra** (no antes de empezar la fase 6: se puede desarrollar contra la
   cuenta de prueba). Hasta que la (2) pase, ningún agente configura ni usa ese token.
-- **Antes de Alegra (fase 6):** validar con Zod el JSON de `datos` leído de la BD; detectar un ítem reemplazado (caso f del set de
-  evaluación); PR aparte: `OLLAMA_MODELO_TEXTO` por defecto a `qwen2.5:7b`; test e2e. (El total = 0 y
-  el dígito de verificación ya están hechos.)
-- **Antes de más usuarios:** bloquear la aprobación si la identificación vino de voz (hoy solo
-  advierte), preguntar con botones ante un borrador quieto, límites de longitud en la salida de la IA
-  y el resto de pendientes de §0 del plan de la 4.4.
+- **Obligatorio antes de emitir la primera factura real (Alegra)**, hallazgos medios de la auditoría del
+  PR #3 (`docs/auditorias/2026-11-04-pr3.md`): (1) un NIT con el DV pegado o separado por espacio o
+  punto se toma como cédula NUIP y no se verifica el DV; (2) "pasaporte", "PEP" o "CE" saltan toda la
+  validación aunque no haya número; (3) un NIT de persona jurídica sin DV es aprobable, y un NIT al que
+  le falta un dígito pasa como cédula antigua; (4) "quita", "elimina" o "borra" en cualquier parte del
+  mensaje apaga el control de ítems que desaparecen; (5) una corrección puede cambiar el valor de un
+  ítem no mencionado, sin aviso.
+- **Antes de Alegra** (no obligatorio para la primera prueba): suma parcial mayor que el total con
+  ítems sin valor; advertencia de voz también para valores y total; Zod en la respuesta de Whisper;
+  "sí" sobre un borrador quieto sin aviso de fecha; el aviso "no lo reenvíes" junto al "⏳ Sigo
+  procesando…"; validar con Zod el JSON de `datos` leído de la BD; detectar un ítem reemplazado (caso f
+  del set de evaluación); PR aparte: `OLLAMA_MODELO_TEXTO` por defecto a `qwen2.5:7b`; test e2e.
+- **Antes de más usuarios:** `app.listen` en `127.0.0.1`; límite de respuestas a no autorizados; un PR
+  aparte para actualizar `prisma` y `@nestjs/platform-express`; bloquear la aprobación si la
+  identificación vino de voz (hoy solo advierte); preguntar con botones ante un borrador quieto;
+  límites de longitud en la salida de la IA; y el resto de pendientes de §0 del plan de la 4.4.
 - **Proceso vigente (desde 2026-11-02):** planes cortos; las decisiones irreversibles se preguntan y las
   reversibles se deciden y se reportan; con un alcance aprobado los pasos van en orden con commit y CI
   por paso; mutaciones solo en predicados críticos; bitácora solo en español.
