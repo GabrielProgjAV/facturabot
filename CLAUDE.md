@@ -144,12 +144,13 @@ Ollama debe estar corriendo con el modelo oficial descargado.
   el token de producción de Alegra** (no antes de empezar la fase 6: se puede desarrollar contra la
   cuenta de prueba). Hasta que la (2) pase, ningún agente configura ni usa ese token.
 - **Obligatorio antes de emitir la primera factura real (Alegra)**: los 5 hallazgos medios de la
-  auditoría del PR #3 (`docs/auditorias/2026-11-04-pr3.md`) están corregidos en `fix/validacion-datos`
-  (PR pendiente de revisión). Queda como límite conocido: un NIT de 8 dígitos sin DV y con nombre de
+  auditoría del PR #3 (`docs/auditorias/2026-11-04-pr3.md`) están corregidos en el PR #5
+  (`fix/validacion-datos`, integrado en `main`). Queda como límite conocido: un NIT de 8 dígitos sin DV y con nombre de
   persona pasa como cédula (solo una consulta al RUT lo detectaría). Pendientes de su revisión de
   seguridad, antes de Alegra: exigir que una identificación o un total que cambian en una corrección
   aparezcan en el mensaje; "quitamanchas" cuenta como "quita"; nombres de empresa sin tipo de
-  sociedad; longitud mínima de cédula (decisión de Gabriel).
+  sociedad; y una cédula de menos de 4 dígitos no es aprobable (decidido por Gabriel el 2026-11-04,
+  reversible; se implementa en la fase de Alegra).
 - **Antes de Alegra** (no obligatorio para la primera prueba): suma parcial mayor que el total con
   ítems sin valor; advertencia de voz también para valores y total; Zod en la respuesta de Whisper;
   "sí" sobre un borrador quieto sin aviso de fecha; el aviso "no lo reenvíes" junto al "⏳ Sigo
