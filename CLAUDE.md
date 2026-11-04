@@ -20,18 +20,27 @@ explícita.
 
 ## Flujo por tarea
 
-1. **PLAN** antes de tocar código: qué, archivos, alternativas, riesgos. Esperar un "aprobado".
+1. **PLAN** antes de tocar código, de 1 o 2 páginas: objetivo, decisiones con recomendación y riesgos.
+   Esperar un "aprobado". Mediciones y relevos van en la bitácora, no en el plan. Antes de proponer
+   algo: "si no lo hago, ¿qué le pasa al piloto con un solo usuario de confianza?"; si es "nada
+   grave", se anota como pendiente para antes de tener más usuarios y no se implementa.
+   - **Decisiones irreversibles** (esquema, emisión, dependencias, modelo de IA, seguridad): se le
+     preguntan a Gabriel. **Reversibles** (textos, mensajes, umbrales): las decide el agente y las
+     reporta.
+   - Con un alcance aprobado, los pasos se hacen en orden, con commit y CI en verde por paso, sin
+     detenerse: se reporta al final o cuando aparezca una decisión irreversible.
 2. **Rama** `tipo/descripcion` (`feat/`, `fix/`, `docs/`, `chore/`) creada desde `main` actualizada.
    Nunca commits directos a `main` (está protegida: exige PR y CI en verde). Commits con prefijos de
    Conventional Commits (`feat:`, `fix:`, `docs:`, `ci:`, `chore:`). Integración por **squash**.
 3. **Antes del PR**, en `apps/api`: `pnpm run lint`, `pnpm exec prettier --check src test`,
    `pnpm exec tsc --noEmit -p tsconfig.json` y `pnpm test` en verde; migración de Prisma si cambia el
    esquema. Revisar el diff completo en busca de secretos y datos reales. Correr los subagentes
-   `control-calidad` y `seguridad` (`.claude/agents/`).
+   `control-calidad` y `seguridad` (`.claude/agents/`). Pruebas de mutación solo en predicados
+   críticos (aprobar, emitir, DV, totales).
 4. **Reporte del PR:** qué se hizo (archivo por archivo), por qué, cómo probarlo, riesgos y decisiones
    pendientes para Gabriel.
-5. Al cerrar una subfase: actualizar la bitácora (`README.es.md`) y el estado del roadmap en los dos
-   README (español e inglés). Al cerrar cada subfase, actualizar también **Estado y plan** del
+5. Al cerrar una subfase: actualizar la bitácora (`README.es.md`, solo en español) y el estado del
+   roadmap en los dos README (el inglés es un resumen corto). Al cerrar cada subfase, actualizar también **Estado y plan** del
    CLAUDE.md.
 6. Cada fase terminada recibe un tag anotado `vX.Y.0` (hechos: `v0.1.0`, `v0.2.0`, `v0.3.0`).
 
@@ -69,7 +78,7 @@ explícita.
 
 | Pieza | Elección |
 |---|---|
-| Canal (desarrollo) | Telegram con **grammY**, *long polling* (sin ngrok). Solo chats en `TELEGRAM_CHATS_PERMITIDOS` |
+| Canal (desarrollo) | Telegram con **grammY**, *long polling* (sin ngrok). Solo usuarios (`ctx.from.id`) en `TELEGRAM_CHATS_PERMITIDOS` y solo en chats privados |
 | Canal (producción, fase 10) | WhatsApp Cloud API de Meta o Twilio, como otro adaptador. Nunca librerías no oficiales |
 | Emisión DIAN | Vía proveedor: Alegra → Siigo |
 | Backend | TypeScript + **NestJS 12** en `apps/api` (TS estricto, Vitest, Oxlint, Prettier) |
@@ -85,12 +94,18 @@ explícita.
 ## Arquitectura (`apps/api/src`)
 
 - `config/env.schema.ts`: variables de entorno validadas con Zod al arrancar (falla rápido).
-- `mensajeria/`: `mensaje.ts` (independiente del canal) y `telegram.service.ts` (adaptador grammY).
+- `mensajeria/`: `mensaje.ts` (independiente del canal), `telegram.service.ts` (adaptador grammY: valida
+  y encola), `cola-mensajes.service.ts` (Queue y Worker de BullMQ) y `procesador-mensajes.ts` (lógica de
+  cada trabajo, esquema Zod de los datos que vienen de Redis).
   La interfaz formal `CanalMensajeria` se escribe cuando llegue el segundo canal.
 - `facturacion/`: `factura.ts` (funciones puras: pesos, faltantes, suma, IVA, resumen,
-  `motivoNoAprobable`), `interprete-texto.service.ts` (Ollama + esquema Zod), `conversacion.service.ts`
-  (borradores: crear, corregir, cancelar, aprobar con "sí" por regex).
-- `voz/transcriptor.service.ts`: audio → texto con Whisper.
+  `motivoNoAprobable`, ítems que desaparecen), `identificacion.ts` (NIT y cédula: forma y DV),
+  `interprete-texto.service.ts` (Ollama + esquema Zod), `conversacion.service.ts` (borradores: crear,
+  corregir, cancelar y aprobar **solo con el botón "✅ Aprobar"** (`a:<borradorId>:<versión>`), si es
+  el mismo borrador y `version == versionMostrada ==` la del botón; "sí" ya no aprueba. Un PENDIENTE
+  quieto más de 2 h se cancela con el siguiente mensaje, y su botón pide confirmar otra vez).
+- `voz/`: `transcriptor.service.ts` (audio → texto con Whisper) y `duracion-ogg.ts` (duración real
+  de la nota).
 - `prisma/`: `PrismaService` global. Esquema en `apps/api/prisma/schema.prisma`.
 
 ## Decisiones de negocio
@@ -120,10 +135,32 @@ Ollama debe estar corriendo con el modelo oficial descargado.
 ## Estado y plan
 
 - ✅ Fases 0–3: validación, base, bot eco en Telegram y factura por texto (tags `v0.1.0`–`v0.3.0`).
-- 🟡 Fase 4 voz (`feat/fase-4-voz`): ✅ 4.1 Whisper, ✅ 4.2 transcripción. Sigue 4.3 cola BullMQ (texto y voz) y 4.4 voz → borradores.
-- PR de la fase 4: marcar como "(ficticio)" los NIT y cédulas de prueba de la bitácora de los README, sobre todo la cédula de prueba de la bitácora.
-- Auditoría externa independiente (`docs/prompts/auditoria-seguridad.md`): antes de integrar el PR de la fase 4 y antes de empezar la fase 6.
-- Fase 3.5 (tras `v0.4.0`, antes de Alegra): caso f, rechazar total = 0, dígito de verificación del NIT (módulo 11) y test e2e. PR aparte: `OLLAMA_MODELO_TEXTO` por defecto a `qwen2.5:7b`.
+- ✅ Fase 4 voz (`feat/fase-4-voz`, PR #3 listo para revisión, auditoría externa hecha; tag `v0.4.0` tras integrarlo): 4.1 Whisper,
+  4.2 transcripción, 4.3 cola BullMQ, 4.4 voz → borradores con aprobación solo con botón. Alcance y
+  pendientes en §0 de `docs/planes/fase-4.4-voz-borradores.md`; bitácora en `README.es.md`.
+- **Auditoría externa independiente** (`docs/prompts/auditoria-seguridad.md`), obligatoria en dos
+  momentos: (1) antes de integrar el PR #3 de la fase 4 (hecha el 2026-11-04: recomienda integrar, sin bloqueantes) y (2) **antes de usar
+  el token de producción de Alegra** (no antes de empezar la fase 6: se puede desarrollar contra la
+  cuenta de prueba). Hasta que la (2) pase, ningún agente configura ni usa ese token.
+- **Obligatorio antes de emitir la primera factura real (Alegra)**, hallazgos medios de la auditoría del
+  PR #3 (`docs/auditorias/2026-11-04-pr3.md`): (1) un NIT con el DV pegado o separado por espacio o
+  punto se toma como cédula NUIP y no se verifica el DV; (2) "pasaporte", "PEP" o "CE" saltan toda la
+  validación aunque no haya número; (3) un NIT de persona jurídica sin DV es aprobable, y un NIT al que
+  le falta un dígito pasa como cédula antigua; (4) "quita", "elimina" o "borra" en cualquier parte del
+  mensaje apaga el control de ítems que desaparecen; (5) una corrección puede cambiar el valor de un
+  ítem no mencionado, sin aviso.
+- **Antes de Alegra** (no obligatorio para la primera prueba): suma parcial mayor que el total con
+  ítems sin valor; advertencia de voz también para valores y total; Zod en la respuesta de Whisper;
+  "sí" sobre un borrador quieto sin aviso de fecha; el aviso "no lo reenvíes" junto al "⏳ Sigo
+  procesando…"; validar con Zod el JSON de `datos` leído de la BD; detectar un ítem reemplazado (caso f
+  del set de evaluación); PR aparte: `OLLAMA_MODELO_TEXTO` por defecto a `qwen2.5:7b`; test e2e.
+- **Antes de más usuarios:** `app.listen` en `127.0.0.1`; límite de respuestas a no autorizados; un PR
+  aparte para actualizar `prisma` y `@nestjs/platform-express`; bloquear la aprobación si la
+  identificación vino de voz (hoy solo advierte); preguntar con botones ante un borrador quieto;
+  límites de longitud en la salida de la IA; y el resto de pendientes de §0 del plan de la 4.4.
+- **Proceso vigente (desde 2026-11-02):** planes cortos; las decisiones irreversibles se preguntan y las
+  reversibles se deciden y se reportan; con un alcance aprobado los pasos van en orden con commit y CI
+  por paso; mutaciones solo en predicados críticos; bitácora solo en español.
 - Después: 5 PDF → inventario · 6 Alegra · 7 clientes y notas crédito · 8 reportes · 9 fotos · 10 WhatsApp · 11 Siigo · 12 multiempresa.
 
 ## Preguntas abiertas

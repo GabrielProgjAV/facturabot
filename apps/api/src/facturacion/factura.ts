@@ -1,3 +1,9 @@
+import {
+  analizarIdentificacion,
+  esDocumentoExtranjero,
+  type Identificacion,
+} from './identificacion.js';
+
 /** Línea de la factura tal como la entendimos (valor = total de la línea, sin IVA). */
 export interface ItemBorrador {
   descripcion: string;
@@ -6,7 +12,12 @@ export interface ItemBorrador {
 
 /** Factura en construcción: lo que se sabe hasta ahora. null = todavía no se sabe. */
 export interface BorradorFactura {
-  cliente: { nombre: string | null; identificacion: string | null };
+  cliente: {
+    nombre: string | null;
+    identificacion: string | null;
+    /** La identificación actual la dictó el usuario en una nota de voz (Whisper pierde dígitos). */
+    identificacionPorVoz?: boolean;
+  };
   items: ItemBorrador[];
   /** Total escrito por el usuario, sin IVA. */
   totalEscrito: number | null;
@@ -58,10 +69,85 @@ export function sumaNoCuadra(borrador: BorradorFactura): boolean {
   return suma !== borrador.totalEscrito;
 }
 
+/**
+ * La identificación del cliente analizada (forma y DV), o null si no hay. Se guarda tal como la
+ * escribió el usuario y se analiza al mostrarla o aprobarla: el código decide, nunca la IA.
+ */
+export function identificacionCliente(
+  borrador: BorradorFactura,
+): Identificacion | null {
+  const { identificacion } = borrador.cliente;
+  if (!identificacion) return null;
+  return analizarIdentificacion(
+    identificacion,
+    esDocumentoExtranjero(identificacion),
+  );
+}
+
+/**
+ * Marca de dónde viene la identificación: si cambió con este mensaje, vino por voz o por texto
+ * según `porVoz`; si no cambió, conserva la marca anterior. La IA no ve la marca, así que se
+ * vuelve a poner aquí tras interpretar.
+ */
+export function conOrigenDeIdentificacion(
+  anterior: BorradorFactura | undefined,
+  nuevo: BorradorFactura,
+  porVoz: boolean,
+): BorradorFactura {
+  const { identificacion } = nuevo.cliente;
+  const cambio = identificacion !== (anterior?.cliente.identificacion ?? null);
+  const marca = cambio
+    ? porVoz
+    : (anterior?.cliente.identificacionPorVoz ?? false);
+  const { identificacionPorVoz: _descartada, ...cliente } = nuevo.cliente;
+  return {
+    ...nuevo,
+    cliente:
+      identificacion && marca
+        ? { ...cliente, identificacionPorVoz: true }
+        : cliente,
+  };
+}
+
+/** "quita", "elimina", "borra" y sus formas ("quítale", "bórralo"), pero no "borrador". */
+const PIDE_QUITAR = /\b(?:qu[ií]t|elimin|b[oó]rr(?!ador))/i;
+
+export interface ItemsQuitados {
+  cantidad: number;
+  /** Las que ya no aparecen; vacía si la IA reescribió alguna y no se sabe cuáles se fueron. */
+  descripciones: string[];
+}
+
+/**
+ * Ítems que una corrección hizo desaparecer sin que el mensaje lo pidiera, o null si no hay.
+ * La IA a veces "olvida" productos al devolver el borrador completo (CLAUDE.md: un ítem que
+ * desaparece se pregunta, nunca se deja pasar en silencio).
+ * Límite conocido: solo mira la cantidad. Si la IA reemplaza un ítem por otro (caso f del set de
+ * evaluación), no se detecta; tampoco reconoce "saca" o "ya no va" como pedido de quitar.
+ */
+export function itemsQuitadosSinPedir(
+  antes: BorradorFactura,
+  despues: BorradorFactura,
+  mensaje: string,
+): ItemsQuitados | null {
+  if (despues.items.length >= antes.items.length || PIDE_QUITAR.test(mensaje))
+    return null;
+  const normalizar = (texto: string) => texto.trim().toLowerCase();
+  const quedan = new Set(despues.items.map((i) => normalizar(i.descripcion)));
+  const cantidad = antes.items.length - despues.items.length;
+  const faltan = antes.items
+    .map((i) => i.descripcion)
+    .filter((d) => !quedan.has(normalizar(d)));
+  return { cantidad, descripciones: faltan.length === cantidad ? faltan : [] };
+}
+
 /** Por qué no se puede aprobar todavía, o null si está lista para aprobar. */
 export function motivoNoAprobable(borrador: BorradorFactura): string | null {
   const faltantes = camposFaltantes(borrador);
   if (faltantes.length > 0) return `Aún falta: ${faltantes.join(', ')}.`;
+  // El DV no cuadra o el número no tiene una forma confirmada: no se corrige solo (4.4 §5.1).
+  const problema = identificacionCliente(borrador)?.problema;
+  if (problema) return problema;
   if (sumaNoCuadra(borrador))
     return 'Los productos no suman el total escrito. Corrígelo antes de aprobar.';
   return null;
@@ -74,11 +160,17 @@ const pesos = new Intl.NumberFormat('es-CO', {
 });
 
 /** Mensaje para el usuario con lo entendido, lo que falta y los totales con IVA. */
-export function resumenBorrador(borrador: BorradorFactura): string {
-  const { nombre, identificacion } = borrador.cliente;
+export function resumenBorrador(
+  borrador: BorradorFactura,
+  titulo = '🧾 Borrador de factura',
+): string {
+  const { nombre } = borrador.cliente;
+  const id = identificacionCliente(borrador);
+  // Normalizada (sin puntos ni prefijo) si se entendió; si no, tal como se escribió.
+  const numero = id?.numero ? `${id.numero}${id.dv ? `-${id.dv}` : ''}` : null;
   const lineas = [
-    '🧾 Borrador de factura',
-    `Cliente: ${nombre ?? '❓'} · NIT/CC: ${identificacion ?? '❓'}`,
+    titulo,
+    `Cliente: ${nombre ?? '❓'} · NIT/CC: ${numero ?? borrador.cliente.identificacion ?? '❓'}`,
     ...borrador.items.map(
       (item) =>
         `• ${item.descripcion}: ${item.valor === null ? '❓' : pesos.format(item.valor)}`,
@@ -92,6 +184,12 @@ export function resumenBorrador(borrador: BorradorFactura): string {
       `Subtotal: ${pesos.format(subtotal)}`,
       `IVA 19 %: ${pesos.format(iva)}`,
       `Total a pagar: ${pesos.format(total)}`,
+    );
+  }
+  if (id?.problema) lineas.push(`⚠️ ${id.problema}`);
+  if (borrador.cliente.identificacionPorVoz) {
+    lineas.push(
+      '⚠️ La identificación vino de una nota de voz: revisa que esté completa antes de aprobar.',
     );
   }
   if (sumaNoCuadra(borrador)) {
