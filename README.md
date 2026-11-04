@@ -39,7 +39,7 @@ this week?").
 | 1 | Project foundation (NestJS, Docker, config, database) | ✅ Done |
 | 2 | **Telegram** echo bot | ✅ Done |
 | 3 | **Invoice by text:** the AI understands the message, asks for what's missing, shows the draft and waits for human approval | ✅ Done |
-| 4 | **Invoice by voice:** voice note → text (Whisper) → same flow as phase 3 | 🟡 In progress (4.1–4.3 done: speech-to-text and a BullMQ message queue; 4.4 next) |
+| 4 | **Invoice by voice:** voice note → text (Whisper) → same flow as phase 3 | ✅ Done (speech-to-text, a BullMQ queue, approval with an inline button, NIT check digit, stale-draft handling; log in README.es.md) |
 | 5 | **Purchase invoices (PDF) → inventory baseline:** read supplier orders and record stock entries (sales not deducted yet) | ⚪ Pending |
 | 6 | Alegra integration and real issuing after approval | ⚪ Pending |
 | 7 | Customers without invoice, credit notes | ⚪ Pending |

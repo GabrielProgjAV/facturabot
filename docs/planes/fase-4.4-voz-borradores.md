@@ -26,8 +26,9 @@ Se hace, en este orden:
 
 **Pendiente** (anotado, no se construye ahora):
 - Antes de tener más usuarios: preguntar con botones ante un PENDIENTE viejo, con el mensaje en espera
-  en Redis y un token en los botones (la versión completa de §14.1); bloquear la cédula que llegó por
-  voz hasta confirmarla (decisión 3); la advertencia de identificación por voz.
+  en Redis y un token en los botones (la versión completa de §14.1); **bloquear** la aprobación si la
+  identificación llegó por voz hasta confirmarla o corregirla por texto (decisión 3; la advertencia ya
+  está hecha, `fb87d20`, y no bloquea).
 - Después de Alegra: la opción D de §14.2 (la IA devuelve solo los cambios) y cualquier cambio a las
   instrucciones del intérprete; detección de ítems menores a $1.000 (decisión 5).
 - De las revisiones de cierre (subagentes `control-calidad` y `seguridad`, 2026-11-02):
@@ -498,14 +499,11 @@ Verificación: lint, Prettier, tsc, 295 tests unitarios y 17 de integración en 
 
 ### Pendiente, en orden
 
-1. **Prueba manual** en Telegram con el guion ficticio de 9 pasos (NIT con DV correcto e
-   incorrecto, "quita", botón, título aprobado, borrador quieto envejecido con
-   `UPDATE borradores SET actualizado_en = now() - interval '3 hours' WHERE estado = 'PENDIENTE'`,
-   nota de voz, "cancelar"). Gabriel aún no la ha hecho.
-2. **Cierre:** resultado de la prueba en la bitácora (README.es.md, entrada 4.4), resumen corto en
-   README.md, "Estado y plan" del CLAUDE.md (incluida la línea de la fase 3.5: el total = 0 ya está).
-3. Auditoría externa (`docs/prompts/auditoria-seguridad.md`), PR #3 listo para revisión y tag
-   `v0.4.0` tras integrarlo.
+1. ✅ **Prueba manual** (2026-11-04): los 9 pasos salieron como se esperaba. Hallazgo: una cédula
+   dictada salió con botón y sin advertencia → advertencia agregada (`fb87d20`).
+2. ✅ **Cierre:** bitácora, estado en los README y "Estado y plan" del CLAUDE.md.
+3. Gabriel integra el PR #3 (*squash*) y después se crea el tag anotado `v0.4.0` sobre el commit de
+   `main`. La auditoría externa va antes de la fase 6.
 
 ### Detalles que una sesión nueva necesita
 

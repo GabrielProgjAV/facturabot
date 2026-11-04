@@ -135,12 +135,19 @@ Ollama debe estar corriendo con el modelo oficial descargado.
 ## Estado y plan
 
 - ✅ Fases 0–3: validación, base, bot eco en Telegram y factura por texto (tags `v0.1.0`–`v0.3.0`).
-- 🟡 Fase 4 voz (`feat/fase-4-voz`, PR #3 en borrador): ✅ 4.1 Whisper, ✅ 4.2 transcripción, ✅ 4.3 cola
-  BullMQ (texto y voz). 🟡 4.4 voz → borradores, con el alcance congelado en §0 de
-  `docs/planes/fase-4.4-voz-borradores.md` (lo demás quedó anotado como pendiente ahí).
-- PR de la fase 4: marcar como "(ficticio)" los NIT y cédulas de prueba de la bitácora de los README, sobre todo la cédula de prueba de la bitácora.
-- Auditoría externa independiente (`docs/prompts/auditoria-seguridad.md`): antes de integrar el PR de la fase 4 y antes de empezar la fase 6.
-- Fase 3.5 (tras `v0.4.0`, antes de Alegra): caso f, rechazar total = 0 y test e2e (el dígito de verificación del NIT pasó a la 4.4). PR aparte: `OLLAMA_MODELO_TEXTO` por defecto a `qwen2.5:7b`.
+- ✅ Fase 4 voz (`feat/fase-4-voz`, PR #3 listo para revisión; tag `v0.4.0` tras integrarlo): 4.1 Whisper,
+  4.2 transcripción, 4.3 cola BullMQ, 4.4 voz → borradores con aprobación solo con botón. Alcance y
+  pendientes en §0 de `docs/planes/fase-4.4-voz-borradores.md`; bitácora en `README.es.md`.
+- **Antes de Alegra (fase 6):** auditoría externa independiente (`docs/prompts/auditoria-seguridad.md`);
+  validar con Zod el JSON de `datos` leído de la BD; detectar un ítem reemplazado (caso f del set de
+  evaluación); PR aparte: `OLLAMA_MODELO_TEXTO` por defecto a `qwen2.5:7b`; test e2e. (El total = 0 y
+  el dígito de verificación ya están hechos.)
+- **Antes de más usuarios:** bloquear la aprobación si la identificación vino de voz (hoy solo
+  advierte), preguntar con botones ante un borrador quieto, límites de longitud en la salida de la IA
+  y el resto de pendientes de §0 del plan de la 4.4.
+- **Proceso vigente (desde 2026-11-02):** planes cortos; las decisiones irreversibles se preguntan y las
+  reversibles se deciden y se reportan; con un alcance aprobado los pasos van en orden con commit y CI
+  por paso; mutaciones solo en predicados críticos; bitácora solo en español.
 - Después: 5 PDF → inventario · 6 Alegra · 7 clientes y notas crédito · 8 reportes · 9 fotos · 10 WhatsApp · 11 Siigo · 12 multiempresa.
 
 ## Preguntas abiertas

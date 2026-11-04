@@ -37,7 +37,7 @@ También: crear clientes sin facturar, notas crédito y reportes ("¿cuánto ven
 | 1 | Base del proyecto (NestJS, Docker, configuración, base de datos) | ✅ Hecha |
 | 2 | Bot eco en **Telegram** | ✅ Hecha |
 | 3 | **Factura por texto:** la IA entiende el mensaje, pide lo que falta, muestra el borrador y espera la aprobación humana | ✅ Hecha |
-| 4 | **Factura por voz:** nota de voz → texto (Whisper) → mismo flujo de la fase 3 | 🟡 En curso (4.1–4.3 hechas; sigue 4.4) |
+| 4 | **Factura por voz:** nota de voz → texto (Whisper) → mismo flujo de la fase 3 | ✅ Hecha (4.1–4.4: Whisper, cola BullMQ, aprobación con botón, voz → borradores) |
 | 5 | **Facturas de compra en PDF → base de inventario:** leer pedidos de proveedores y registrar las entradas de productos (todavía sin descontar ventas) | ⚪ Pendiente |
 | 6 | Conexión con Alegra y emisión real tras la aprobación | ⚪ Pendiente |
 | 7 | Clientes sin factura y notas crédito | ⚪ Pendiente |
@@ -280,6 +280,31 @@ También: crear clientes sin facturar, notas crédito y reportes ("¿cuánto ven
     comprobación de ítems que desaparecen no lo detecta, porque la cantidad de ítems no baja. Tiempo
     por caso con qwen cargado: 3,9 a 9,6 s. Arreglarlo (opción D y cambios a las instrucciones) queda
     para después de Alegra.
+  - **Aprobación solo con botón:** `✅ Aprobar` lleva el borrador y la versión (`a:<id>:<versión>`) y
+    pasa por la cola, en orden. El "sí" escrito o dictado ya no aprueba: reenvía el resumen con su
+    botón. Se autoriza al **usuario** (`ctx.from.id`) y solo en chats privados. Se guardan quién
+    aprobó y cuándo (`aprobado_por`, `aprobado_en`; migración nueva).
+  - **Voz → borrador:** la duración se lee del propio Ogg (no la que declara el cliente), la
+    descarga corta al pasar 1 MB y la transcripción tiene el mismo límite de 1.000 caracteres que un
+    texto. Tras un reinicio, el usuario recibe el estado real de su borrador, no un "reenvíalo" que
+    pudo ser falso.
+  - **Identificación (NIT y cédula):** `identificacion.ts` normaliza y calcula el dígito de
+    verificación (Orden Administrativa 4 de 1989 de la DIAN) y revisa la forma con reglas de fuentes
+    oficiales. Si el DV no cuadra o la forma no es válida, el borrador no se puede aprobar. Si el
+    número vino de una **nota de voz**, el resumen advierte que se revise (por ahora no bloquea).
+  - **Borrador olvidado:** un pendiente sin cambios por más de 2 h se cancela con el siguiente mensaje
+    y este empieza uno nuevo, con aviso. Se interpreta antes de cancelar y todo va en una transacción.
+  - **Latencia:** timeout de Ollama a 240 s y "⏳ Sigo procesando…" a los 30 s (la IA genera ~6
+    tokens/s; un trabajo real llegó a 116 s).
+  - **Ítem que desaparece:** si una corrección baja los ítems sin decir "quita", "elimina" o "borra",
+    no se guarda y se pregunta. No detecta un ítem reemplazado por otro (caso f).
+  - **Prueba manual (2026-11-04):** los 9 pasos del guion salieron como se esperaba. Hallazgo: una
+    cédula dictada llegó con botón y sin advertencia (se había perdido al reducir el alcance); ya
+    advierte.
+  - **Proceso:** una revisión de arquitectura vio sobreingeniería, así que el 2026-11-02 el alcance se
+    redujo a lo mínimo para cerrar la fase (§0 del plan) y se simplificó el borrador olvidado. Lo
+    diferido (bloqueo por voz, preguntar con botones, Zod sobre el JSON de la BD, opción D) quedó
+    anotado por fecha: antes de Alegra o antes de más usuarios.
 
 ## 5. Cómo ejecutar
 
