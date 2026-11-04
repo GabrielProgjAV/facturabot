@@ -325,9 +325,19 @@ de siempre: el código detecta y **pregunta**; nunca corrige en silencio. Todos 
   nombrado por una palabra que lo distinga de los demás ("quita la azul" no deja ir la amarilla).
 - **Valores cambiados:** si un ítem conservado cambia de valor (o lo pierde) y el valor nuevo no
   aparece en el mensaje ("80" cuenta como 80 mil), la corrección no se guarda y se pregunta.
-- **Pruebas:** 396 tests unitarios. Mutaciones a mano en los predicados críticos (DV, rangos, exigir
-  DV, último grupo, empresa, valores, ítems nombrados, suma e IVA): todas mueren salvo una equivalente;
-  el redondeo del IVA tenía un hueco previo y ganó un test.
+- **Revisión de seguridad (subagente):** encontró formas de saltarse los controles, corregidas en la
+  misma rama: cédula de 10 dígitos con 0 inicial; "NIT" escrito sin DV (ahora se exige con cualquier
+  longitud); "CE 900000001" (documento extranjero con número de NIT sin guion); un valor dicho para
+  otro ítem ("la negra a 45 mil" ya no cambia la azul: el mensaje tiene que nombrar el ítem); ítems
+  nuevos o con la descripción reescrita y un valor que no está en el mensaje; "no quites …" como
+  pedido de quitar; "S.A.S. BIC".
+- **Pruebas:** 415 tests unitarios. Mutaciones a mano en los predicados críticos (DV, rangos, exigir
+  DV, último grupo, documento extranjero, empresa, valores, ítems nombrados, suma e IVA): todas mueren
+  salvo una equivalente; el redondeo del IVA tenía un hueco previo y ganó un test.
+- **Pendientes que dejó la revisión** (anotados en `CLAUDE.md`): verificar que una identificación o un
+  total que cambian en una corrección aparezcan en el mensaje; palabras compuestas como
+  "quitamanchas" cuentan como "quita"; nombres de empresa sin tipo de sociedad; longitud mínima de una
+  cédula.
 
 ## 5. Cómo ejecutar
 
