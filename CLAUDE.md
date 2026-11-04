@@ -99,7 +99,8 @@ explícita.
   cada trabajo, esquema Zod de los datos que vienen de Redis).
   La interfaz formal `CanalMensajeria` se escribe cuando llegue el segundo canal.
 - `facturacion/`: `factura.ts` (funciones puras: pesos, faltantes, suma, IVA, resumen,
-  `motivoNoAprobable`, ítems que desaparecen), `identificacion.ts` (NIT y cédula: forma y DV),
+  `motivoNoAprobable`, nombre de empresa, ítems que desaparecen sin nombrarlos y valores cambiados
+  sin aparecer en el mensaje), `identificacion.ts` (NIT y cédula: forma y DV),
   `interprete-texto.service.ts` (Ollama + esquema Zod), `conversacion.service.ts` (borradores: crear,
   corregir, cancelar y aprobar **solo con el botón "✅ Aprobar"** (`a:<borradorId>:<versión>`), si es
   el mismo borrador y `version == versionMostrada ==` la del botón; "sí" ya no aprueba. Un PENDIENTE
@@ -142,13 +143,10 @@ Ollama debe estar corriendo con el modelo oficial descargado.
   momentos: (1) antes de integrar el PR #3 de la fase 4 (hecha el 2026-11-04: recomienda integrar, sin bloqueantes) y (2) **antes de usar
   el token de producción de Alegra** (no antes de empezar la fase 6: se puede desarrollar contra la
   cuenta de prueba). Hasta que la (2) pase, ningún agente configura ni usa ese token.
-- **Obligatorio antes de emitir la primera factura real (Alegra)**, hallazgos medios de la auditoría del
-  PR #3 (`docs/auditorias/2026-11-04-pr3.md`): (1) un NIT con el DV pegado o separado por espacio o
-  punto se toma como cédula NUIP y no se verifica el DV; (2) "pasaporte", "PEP" o "CE" saltan toda la
-  validación aunque no haya número; (3) un NIT de persona jurídica sin DV es aprobable, y un NIT al que
-  le falta un dígito pasa como cédula antigua; (4) "quita", "elimina" o "borra" en cualquier parte del
-  mensaje apaga el control de ítems que desaparecen; (5) una corrección puede cambiar el valor de un
-  ítem no mencionado, sin aviso.
+- **Obligatorio antes de emitir la primera factura real (Alegra)**: los 5 hallazgos medios de la
+  auditoría del PR #3 (`docs/auditorias/2026-11-04-pr3.md`) están corregidos en `fix/validacion-datos`
+  (PR pendiente de revisión). Queda como límite conocido: un NIT de 8 dígitos sin DV y con nombre de
+  persona pasa como cédula (solo una consulta al RUT lo detectaría).
 - **Antes de Alegra** (no obligatorio para la primera prueba): suma parcial mayor que el total con
   ítems sin valor; advertencia de voz también para valores y total; Zod en la respuesta de Whisper;
   "sí" sobre un borrador quieto sin aviso de fecha; el aviso "no lo reenvíes" junto al "⏳ Sigo

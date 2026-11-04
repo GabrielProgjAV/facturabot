@@ -306,6 +306,29 @@ También: crear clientes sin facturar, notas crédito y reportes ("¿cuánto ven
     diferido (bloqueo por voz, preguntar con botones, Zod sobre el JSON de la BD, opción D) quedó
     anotado por fecha: antes de Alegra o antes de más usuarios.
 
+### Hallazgos medios de la auditoría del PR #3 (`fix/validacion-datos`, 2026-11-04)
+
+Los cinco hallazgos que eran obligatorios antes de emitir la primera factura real. El principio es el
+de siempre: el código detecta y **pregunta**; nunca corrige en silencio. Todos los ejemplos son ficticios.
+
+- **DV pegado o separado:** "900.000.001.2" o "900000001 2" (último grupo de 1 dígito) preguntan si
+  ese dígito es el DV. Una cédula de 10 dígitos que empieza por 6 a 9 ("9000000012") queda no
+  aprobable (decisión de Gabriel: no hay NUIP confirmados en ese rango).
+- **Documento extranjero:** sin número ("pasaporte") o con un número ilegible (menos de 5 caracteres,
+  sin dígitos o con símbolos) no es aprobable. Si trae forma de NIT con DV ("CE: 900000001-9") o dice
+  "NIT", se pregunta cuál es.
+- **NIT sin DV:** todo NIT de 9 dígitos (600 a 999 millones) exige su DV. Si el nombre del cliente
+  termina en S.A.S., S.A., Ltda., E.U., S. en C., S.C.A. o "& Cía." y la identificación no es un NIT
+  de empresa, se pregunta (así se detecta el NIT al que le falta un dígito). Límite: con un nombre de
+  persona, un NIT de 8 dígitos sin DV sigue pasando como cédula; solo una consulta al RUT lo detectaría.
+- **Ítems que se quitan:** "quita/elimina/borra" ya no basta; cada ítem que desaparece tiene que estar
+  nombrado por una palabra que lo distinga de los demás ("quita la azul" no deja ir la amarilla).
+- **Valores cambiados:** si un ítem conservado cambia de valor (o lo pierde) y el valor nuevo no
+  aparece en el mensaje ("80" cuenta como 80 mil), la corrección no se guarda y se pregunta.
+- **Pruebas:** 396 tests unitarios. Mutaciones a mano en los predicados críticos (DV, rangos, exigir
+  DV, último grupo, empresa, valores, ítems nombrados, suma e IVA): todas mueren salvo una equivalente;
+  el redondeo del IVA tenía un hueco previo y ganó un test.
+
 ## 5. Cómo ejecutar
 
 Requisitos: [fnm](https://github.com/Schniz/fnm) (Node 24 según `.nvmrc`), [pnpm](https://pnpm.io) y
