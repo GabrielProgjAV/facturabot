@@ -138,8 +138,10 @@ Ollama debe estar corriendo con el modelo oficial descargado.
 - ✅ Fase 4 voz (`feat/fase-4-voz`, PR #3 listo para revisión, a la espera de la auditoría externa; tag `v0.4.0` tras integrarlo): 4.1 Whisper,
   4.2 transcripción, 4.3 cola BullMQ, 4.4 voz → borradores con aprobación solo con botón. Alcance y
   pendientes en §0 de `docs/planes/fase-4.4-voz-borradores.md`; bitácora en `README.es.md`.
-- **Auditoría externa independiente** (`docs/prompts/auditoria-seguridad.md`): antes de integrar el PR de
-  la fase 4 y antes de empezar la fase 6. Aún no se ha hecho.
+- **Auditoría externa independiente** (`docs/prompts/auditoria-seguridad.md`), obligatoria en dos
+  momentos: (1) antes de integrar el PR #3 de la fase 4 (esperada el 2026-11-04) y (2) **antes de usar
+  el token de producción de Alegra** (no antes de empezar la fase 6: se puede desarrollar contra la
+  cuenta de prueba). Hasta que la (2) pase, ningún agente configura ni usa ese token.
 - **Antes de Alegra (fase 6):** validar con Zod el JSON de `datos` leído de la BD; detectar un ítem reemplazado (caso f del set de
   evaluación); PR aparte: `OLLAMA_MODELO_TEXTO` por defecto a `qwen2.5:7b`; test e2e. (El total = 0 y
   el dígito de verificación ya están hechos.)
