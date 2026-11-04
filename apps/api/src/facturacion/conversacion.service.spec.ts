@@ -237,7 +237,7 @@ describe('ConversacionService', () => {
 
       expect(prisma.borrador.update).not.toHaveBeenCalled();
       expect(respuesta.texto).toMatch(
-        /^⚠️ Con tu corrección, vinilo pasaba de \$\s50\.000 a \$\s55\.000, y ese valor no está en tu mensaje\./,
+        /^⚠️ Con tu corrección, vinilo pasaba de \$\s50\.000 a \$\s55\.000, y tu mensaje no dice ese valor para ese producto\./,
       );
       expect(respuesta.texto).toContain('No cambié el borrador');
       expect(respuesta.mostrar).toEqual({
@@ -245,6 +245,21 @@ describe('ConversacionService', () => {
         version: 1,
         aprobable: true,
       });
+    });
+
+    it('un ítem nuevo con un valor que el mensaje no dice: no se guarda y avisa que aparecía', async () => {
+      const { servicio, prisma, interprete } = crear(fila());
+      interprete.interpretar.mockResolvedValueOnce({
+        ...borrador,
+        items: [...borrador.items, { descripcion: 'brocha', valor: 12000 }],
+      });
+
+      const respuesta = await servicio.responder(42, 'agrega una brocha');
+
+      expect(prisma.borrador.update).not.toHaveBeenCalled();
+      expect(respuesta.texto).toMatch(
+        /^⚠️ Con tu corrección aparecía brocha con \$\s12\.000, y ese valor no está en tu mensaje\./,
+      );
     });
 
     it('si el mensaje dice el valor nuevo, la corrección se guarda', async () => {

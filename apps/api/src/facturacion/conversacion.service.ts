@@ -401,7 +401,9 @@ function avisoDescartada({ quitados, valores }: CambiosSinPedir): string {
   }
   for (const v of valores) {
     lineas.push(
-      `⚠️ Con tu corrección, ${v.descripcion} pasaba de ${pesos(v.antes)} a ${pesos(v.despues)}, y ese valor no está en tu mensaje.`,
+      v.nuevo
+        ? `⚠️ Con tu corrección aparecía ${v.descripcion} con ${pesos(v.despues)}, y ese valor no está en tu mensaje.`
+        : `⚠️ Con tu corrección, ${v.descripcion} pasaba de ${pesos(v.antes)} a ${pesos(v.despues)}, y tu mensaje no dice ese valor para ese producto.`,
     );
   }
   lineas.push(

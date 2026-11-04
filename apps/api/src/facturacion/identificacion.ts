@@ -93,6 +93,8 @@ export function analizarIdentificacion(
   if (extranjero) return analizarDocumentoExtranjero(limpio);
 
   const sinPrefijo = limpio.replace(PREFIJO, '');
+  // Quien escribe "NIT" dice que el número lleva DV, también el de una persona natural.
+  const diceNit = /^\s*n\.?\s?i\.?\s?t(?![a-z])/i.test(limpio);
   // Número con puntos, comas o espacios de miles, y opcionalmente "-DV" (un solo dígito).
   const partes = /^([\d.,\s]+?)(?:\s*-\s*(\d))?$/.exec(sinPrefijo);
   if (!partes) {
@@ -135,7 +137,7 @@ export function analizarIdentificacion(
     dvCalculado,
     dvVerificado,
     forma,
-    problema: problemaDeDv(numero, dv, forma, dvVerificado),
+    problema: problemaDeDv(numero, dv, forma, dvVerificado, diceNit),
   };
 }
 
@@ -149,14 +151,15 @@ function problemaDeDv(
   dv: string | null,
   forma: FormaIdentificacion,
   dvVerificado: boolean | null,
+  diceNit: boolean,
 ): string | null {
   // No se dice cuál "debería" ser: si el número está mal escrito, ese DV también estaría mal.
   if (dvVerificado === false) {
     return `El dígito de verificación ${dv} no coincide con el número ${numero}. ¿Lo revisas?`;
   }
-  // Todo NIT de 9 dígitos tiene DV: sin él no se puede comprobar que el número esté completo
-  // (hallazgo 3 de la auditoría del PR #3).
-  if (dv === null && esNitDeNueveDigitos(forma)) {
+  // Todo NIT de 9 dígitos tiene DV, y también el que se escribe como "NIT": sin él no se puede
+  // comprobar que el número esté completo (hallazgo 3 de la auditoría del PR #3).
+  if (dv === null && (esNitDeNueveDigitos(forma) || diceNit)) {
     return `Falta el dígito de verificación del NIT ${numero}. Escríbelo después de un guion (${numero}-…).`;
   }
   return null;
@@ -177,6 +180,9 @@ function analizarDocumentoExtranjero(texto: string): Identificacion {
   if (/\bn\.?\s?i\.?\s?t\b/i.test(texto) || /\d\s*-\s*\d\s*$/.test(resto)) {
     problema =
       'Dice que es un documento extranjero, pero el número tiene forma de NIT con dígito de verificación. ¿Cuál es? Si es un NIT, escríbelo así: NIT 900000001-2 (ejemplo ficticio).';
+  } else if (tieneFormaDeNit(resto, numero)) {
+    problema =
+      'Dice que es un documento extranjero, pero el número tiene forma de NIT. ¿Cuál es? Si es un NIT, escríbelo con su dígito de verificación: NIT 900000001-2 (ejemplo ficticio).';
   } else if (!numero) {
     problema = 'No encontré el número del documento.';
   } else if (!NUMERO_EXTRANJERO.test(numero)) {
@@ -193,12 +199,28 @@ function analizarDocumentoExtranjero(texto: string): Identificacion {
   };
 }
 
+/**
+ * Un número de documento extranjero con forma de NIT: 9 dígitos desde 600.000.000, 10 que
+ * empiezan por 6 a 9 (DV pegado) o un último dígito suelto (DV separado). Se pregunta: la palabra
+ * "CE" o "pasaporte" no puede saltarse la comprobación del DV.
+ */
+function tieneFormaDeNit(resto: string, numero: string): boolean {
+  if (!/^\d+$/.test(numero)) return false;
+  const grupos = resto.split(/[.,\s]+/);
+  return (
+    (numero.length === 9 && Number(numero) >= 600_000_000) ||
+    (numero.length === 10 && /^[6-9]/.test(numero)) ||
+    (grupos.length > 1 && grupos[grupos.length - 1].length === 1)
+  );
+}
+
 function formaSegunNumero(numero: string): FormaIdentificacion {
   if (numero.length <= 8) return 'cedula_antigua';
   // Una cédula de 10 dígitos que empieza por 6 a 9 tiene la forma de un NIT con el DV pegado
   // ("9000000012", ficticio): no hay NUIP confirmados en ese rango (hallazgo 1, decisión de Gabriel).
+  // Uno que empieza por 0 ("0900000001") tampoco es un NUIP.
   if (numero.length === 10) {
-    return Number(numero[0]) >= 6 ? 'desconocida' : 'cedula_nuip';
+    return /^[1-5]/.test(numero) ? 'cedula_nuip' : 'desconocida';
   }
   if (numero.length === 9) {
     const valor = Number(numero);
@@ -209,6 +231,9 @@ function formaSegunNumero(numero: string): FormaIdentificacion {
 }
 
 function problemaDeForma(numero: string, dv: string | null): string {
+  if (numero.length === 10 && numero.startsWith('0')) {
+    return 'Tiene 10 dígitos y empieza por 0: no coincide con una cédula ni con un NIT. ¿Lo revisas?';
+  }
   if (numero.length === 10) {
     const nit = numero.slice(0, 9);
     return dv === null

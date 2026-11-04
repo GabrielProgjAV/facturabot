@@ -383,6 +383,14 @@ describe('itemsQuitadosSinPedir (CLAUDE.md: un ítem que desaparece se pregunta)
     ).toBeNull();
   });
 
+  it.each([
+    'no quites la azul',
+    'no le borres la azul',
+    'sin eliminar la azul',
+  ])('"%s" es una negación: no pide quitar, pregunta', (mensaje) => {
+    expect(itemsQuitadosSinPedir(completo, sinLaAzul, mensaje)).not.toBeNull();
+  });
+
   it('"borrador" no cuenta como "borra"', () => {
     expect(
       itemsQuitadosSinPedir(
@@ -484,7 +492,14 @@ describe('valoresCambiadosSinPedir (hallazgo 5: un valor no mencionado no cambia
   it('un ítem conservado que cambia a un valor que el mensaje no dice: se reporta', () => {
     expect(
       valoresCambiadosSinPedir(completo, conAzul(50000), 'el nit es 123'),
-    ).toEqual([{ descripcion: '1/2 laca azul', antes: 45000, despues: 50000 }]);
+    ).toEqual([
+      {
+        descripcion: '1/2 laca azul',
+        antes: 45000,
+        despues: 50000,
+        nuevo: false,
+      },
+    ]);
   });
 
   it.each([
@@ -502,7 +517,14 @@ describe('valoresCambiadosSinPedir (hallazgo 5: un valor no mencionado no cambia
   it('un valor que se pierde (pasa a null) se reporta aunque el mensaje tenga números', () => {
     expect(
       valoresCambiadosSinPedir(completo, conAzul(null), 'el total es 96 mil'),
-    ).toEqual([{ descripcion: '1/2 laca azul', antes: 45000, despues: null }]);
+    ).toEqual([
+      {
+        descripcion: '1/2 laca azul',
+        antes: 45000,
+        despues: null,
+        nuevo: false,
+      },
+    ]);
   });
 
   it('un valor que faltaba y el mensaje lo da: no se reporta; si no lo da, sí', () => {
@@ -527,6 +549,60 @@ describe('valoresCambiadosSinPedir (hallazgo 5: un valor no mencionado no cambia
 
     expect(valoresCambiadosSinPedir(completo, completo, 'x')).toEqual([]);
     expect(valoresCambiadosSinPedir(completo, otraLetra, 'x')).toEqual([]);
+  });
+
+  it('un valor dicho para otro ítem no le cambia el valor a la azul (el mensaje no la nombra)', () => {
+    expect(
+      valoresCambiadosSinPedir(completo, conAzul(78000), 'la negra a 78 mil'),
+    ).toHaveLength(1);
+    expect(
+      valoresCambiadosSinPedir(completo, conAzul(78000), 'la azul a 78 mil'),
+    ).toEqual([]);
+  });
+
+  it('un ítem nuevo con un valor que no está en el mensaje: se reporta como nuevo', () => {
+    const conBrocha: BorradorFactura = {
+      ...completo,
+      items: [...completo.items, { descripcion: 'brocha', valor: 12000 }],
+    };
+
+    expect(
+      valoresCambiadosSinPedir(completo, conBrocha, 'agrega una brocha'),
+    ).toEqual([
+      { descripcion: 'brocha', antes: null, despues: 12000, nuevo: true },
+    ]);
+    expect(
+      valoresCambiadosSinPedir(
+        completo,
+        conBrocha,
+        'agrega una brocha de 12 mil',
+      ),
+    ).toEqual([]);
+  });
+
+  it('descripción reescrita con otro valor: se reporta; con el mismo valor, no', () => {
+    const reescrita = (valor: number): BorradorFactura => ({
+      ...completo,
+      items: completo.items.map((i) =>
+        i.descripcion === '1/2 laca azul'
+          ? { descripcion: '1/2 galón laca azul', valor }
+          : i,
+      ),
+    });
+
+    expect(
+      valoresCambiadosSinPedir(completo, reescrita(60000), 'es de galón'),
+    ).toEqual([
+      {
+        descripcion: '1/2 galón laca azul',
+        antes: null,
+        despues: 60000,
+        nuevo: true,
+      },
+    ]);
+    expect(
+      valoresCambiadosSinPedir(completo, reescrita(45000), 'es de galón'),
+    ).toEqual([]);
   });
 
   it('el mismo valor en otro ítem del mensaje no basta si no es ese valor', () => {
@@ -568,6 +644,7 @@ describe('pareceEmpresa', () => {
     'Ejemplo S. en C.',
     'Pérez & Cía.',
     'Pérez y Cía',
+    'Pinturas Ejemplo S.A.S. BIC',
   ])('"%s" parece una empresa', (nombre) => {
     expect(pareceEmpresa(nombre)).toBe(true);
   });

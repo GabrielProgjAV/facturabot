@@ -225,6 +225,31 @@ describe('NIT con el DV pegado o separado (hallazgo 1)', () => {
     );
   });
 
+  it.each(['0900000001', '0900000001-5'])(
+    '"%s" (10 dígitos que empiezan por 0): no es un NUIP, pregunta',
+    (texto) => {
+      const resultado = analizarIdentificacion(texto);
+
+      expect(resultado.forma).toBe('desconocida');
+      expect(resultado.problema).toBe(
+        'Tiene 10 dígitos y empieza por 0: no coincide con una cédula ni con un NIT. ¿Lo revisas?',
+      );
+    },
+  );
+
+  it.each(['NIT 90000001', 'nit: 12345678', 'N.I.T. 1000000001'])(
+    '"%s": quien escribe "NIT" sin DV, con cualquier longitud, debe darlo (hallazgo 3)',
+    (texto) => {
+      expect(analizarIdentificacion(texto).problema).toContain(
+        'Falta el dígito de verificación del NIT',
+      );
+    },
+  );
+
+  it('"NIT 12345678-8": NIT de persona natural con su DV correcto, sin problema', () => {
+    expect(analizarIdentificacion('NIT 12345678-8').problema).toBeNull();
+  });
+
   it('10 dígitos que empiezan por 6 a 9 con DV: tampoco pasa', () => {
     expect(analizarIdentificacion('9000000012-3').problema).toBe(
       'Tiene 10 dígitos y empieza como un NIT; un NIT tiene 9 más el dígito de verificación. ¿Lo revisas?',
@@ -302,6 +327,18 @@ describe('documentos extranjeros', () => {
   ])('"%s" sin número: lo pide (hallazgo 2)', (texto) => {
     expect(analizarIdentificacion(texto, true).problema).toBe(
       'No encontré el número del documento.',
+    );
+  });
+
+  it.each([
+    'CE 900000001',
+    'PPT 9000000012',
+    'pasaporte 900.000.001 2',
+    'CE 600000000',
+    'CE 12.345.678.8',
+  ])('"%s": número con forma de NIT sin guion, pregunta cuál es', (texto) => {
+    expect(analizarIdentificacion(texto, true).problema).toContain(
+      'el número tiene forma de NIT. ¿Cuál es?',
     );
   });
 

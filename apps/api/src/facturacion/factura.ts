@@ -5,11 +5,12 @@ import {
 } from './identificacion.js';
 
 /**
- * Nombre que termina en un tipo de sociedad: S.A.S., S.A., Ltda., E.U., S. en C., S.C.A., "& Cía.".
+ * Nombre que termina en un tipo de sociedad: S.A.S., S.A., Ltda., E.U., S. en C., S.C.A., "& Cía.",
+ * con "BIC" opcional al final. Heurística: un nombre comercial sin tipo de sociedad no se reconoce.
  * Solo al final del nombre, para no confundir "Rosa" o "Elsa" con "S.A.".
  */
 const NOMBRE_DE_EMPRESA =
-  /(?:(?:^|[\s,.])(?:s\.?\s?a\.?\s?s|s\.?\s?a|ltda|limitada|e\.?\s?u|s\.?\s?c\.?\s?a|s\.?\s?en\s?c(?:\.?\s?s|\.?\s?a)?)|(?:&|\by)\s*c[ií]a)\.?\s*$/i;
+  /(?:(?:^|[\s,.])(?:s\.?\s?a\.?\s?s|s\.?\s?a|ltda|limitada|e\.?\s?u|s\.?\s?c\.?\s?a|s\.?\s?en\s?c(?:\.?\s?s|\.?\s?a)?)|(?:&|\by)\s*c[ií]a)(?:\.?\s+bic)?\.?\s*$/i;
 
 /** true si el nombre del cliente tiene la forma de una persona jurídica (p. ej. "Pinturas Sol SAS"). */
 export function pareceEmpresa(nombre: string | null): boolean {
@@ -137,8 +138,12 @@ export function conOrigenDeIdentificacion(
   };
 }
 
-/** "quita", "elimina", "borra" y sus formas ("quítale", "bórralo"), pero no "borrador". */
-const PIDE_QUITAR = /\b(?:qu[ií]t|elimin|b[oó]rr(?!ador))/i;
+/**
+ * "quita", "elimina", "borra" y sus formas ("quítale", "bórralo"), pero no "borrador" ni una
+ * negación ("no quites la brocha", "no le borres nada").
+ */
+const PIDE_QUITAR =
+  /(?<!\b(?:no|sin)\s+(?:(?:le|la|lo|les|las|los|me)\s+)?)\b(?:qu[ií]t|elimin|b[oó]rr(?!ador))/i;
 
 /** Palabras que no distinguen un producto de otro. */
 const PALABRAS_VACIAS = new Set([
@@ -203,7 +208,12 @@ function nombraItem(
 function emparejar(
   antes: ItemBorrador[],
   despues: ItemBorrador[],
-): { pares: [ItemBorrador, ItemBorrador][]; faltan: ItemBorrador[] } {
+): {
+  pares: [ItemBorrador, ItemBorrador][];
+  faltan: ItemBorrador[];
+  /** Ítems de después sin pareja: nuevos, o con la descripción reescrita. */
+  sobran: ItemBorrador[];
+} {
   const libres = [...despues];
   const pares: [ItemBorrador, ItemBorrador][] = [];
   const faltan: ItemBorrador[] = [];
@@ -218,7 +228,7 @@ function emparejar(
         ItemBorrador,
       ]);
   }
-  return { pares, faltan };
+  return { pares, faltan, sobran: libres };
 }
 
 export interface ItemsQuitados {
@@ -258,11 +268,13 @@ export function itemsQuitadosSinPedir(
   return { cantidad, descripciones: sinNombrar.map((i) => i.descripcion) };
 }
 
-/** Un ítem que se conservó con otro valor. */
+/** Un ítem que se conservó con otro valor, o uno nuevo o reescrito con un valor que no se dijo. */
 export interface ValorCambiado {
   descripcion: string;
   antes: number | null;
   despues: number | null;
+  /** true si el ítem no estaba antes (nuevo, o con la descripción reescrita por la IA). */
+  nuevo: boolean;
 }
 
 /**
@@ -281,9 +293,13 @@ export function valoresDelMensaje(mensaje: string): Set<number> {
 }
 
 /**
- * Ítems que la corrección conservó pero con otro valor que el mensaje no dice (hallazgo 5 de la
- * auditoría del PR #3). La IA devuelve el borrador completo y puede cambiar un valor que nadie
- * mencionó; un valor que se pierde (pasa a null) también se pregunta.
+ * Valores que la corrección cambió sin que el mensaje los diga (hallazgo 5 de la auditoría del
+ * PR #3). La IA devuelve el borrador completo y puede cambiar un valor que nadie mencionó.
+ * - Un ítem conservado con otro valor: el valor nuevo tiene que aparecer en el mensaje y el
+ *   mensaje tiene que nombrar ese ítem ("la negra a 45 mil" no le cambia el valor a la azul).
+ *   Un valor que se pierde (pasa a null) siempre se pregunta.
+ * - Un ítem nuevo o con la descripción reescrita: su valor tiene que aparecer en el mensaje,
+ *   salvo que sea el mismo valor de un ítem que ya no está (solo se reescribió la descripción).
  */
 export function valoresCambiadosSinPedir(
   antes: BorradorFactura,
@@ -291,16 +307,39 @@ export function valoresCambiadosSinPedir(
   mensaje: string,
 ): ValorCambiado[] {
   const enMensaje = valoresDelMensaje(mensaje);
-  return emparejar(antes.items, despues.items)
-    .pares.filter(
+  const palabrasMensaje = palabras(mensaje);
+  const { pares, faltan, sobran } = emparejar(antes.items, despues.items);
+  const cambiados = pares
+    .filter(
       ([a, d]) =>
-        a.valor !== d.valor && (d.valor === null || !enMensaje.has(d.valor)),
+        a.valor !== d.valor &&
+        (d.valor === null ||
+          !enMensaje.has(d.valor) ||
+          !nombraItem(a, antes.items, palabrasMensaje)),
     )
     .map(([a, d]) => ({
       descripcion: d.descripcion,
       antes: a.valor,
       despues: d.valor,
+      nuevo: false,
     }));
+  const valoresQueSeFueron = faltan.map((i) => i.valor);
+  const nuevos = sobran
+    .filter((d) => {
+      const i = valoresQueSeFueron.indexOf(d.valor);
+      if (i !== -1) {
+        valoresQueSeFueron.splice(i, 1);
+        return false;
+      }
+      return d.valor !== null && !enMensaje.has(d.valor);
+    })
+    .map((d) => ({
+      descripcion: d.descripcion,
+      antes: null,
+      despues: d.valor,
+      nuevo: true,
+    }));
+  return [...cambiados, ...nuevos];
 }
 
 /** Por qué no se puede aprobar todavía, o null si está lista para aprobar. */
