@@ -113,9 +113,8 @@ un proveedor falso (201, 400 con y sin factura, timeout, reinicio).
   problema. Con el PC apagado, una aprobación espera en Redis como PENDIENTE y sale al encenderlo.
 - **Requisitos del PC antes de la primera factura real:** respaldo diario **cifrado** de PostgreSQL
   guardado fuera del PC; suspensión desactivada mientras el bot esté en uso (hoy, las sesiones de
-  prueba; si algún día corre en horario de tienda, ese horario); cuenta de Windows con clave, y
-  BitLocker si la edición lo trae (Windows 11 Home suele traer solo el "cifrado de dispositivo": se
-  verifica).
+  prueba; si algún día corre en horario de tienda, ese horario); sesión del sistema operativo con
+  clave, y disco cifrado si el equipo lo permite.
 - **Plan B ante una caída:** facturar a mano en la web de Alegra, como hoy. Al volver, el borrador de
   esa venta se cancela en el bot para no emitirla dos veces.
 
