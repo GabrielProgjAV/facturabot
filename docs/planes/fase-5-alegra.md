@@ -66,24 +66,38 @@ definitivo al crearlo).
   nunca mientras el borrador del bot está en corrección. Así cada borrador de Alegra se timbra
   enseguida y se minimizan los huecos de numeración.
 - **Bandeja de salida (*transactional outbox*):** en **una transacción**, el borrador del bot pasa a
-  APROBADO y `Emision` nace en PENDIENTE. Después se encola el trabajo `emitir` (BullMQ). El worker
-  pasa a CREANDO_BORRADOR **justo antes** del paso 1, con `observations = "facturabot:<emisionId>"`.
-- **Paso 1, 201** → BORRADOR_CREADO y se guarda `idExterno` de inmediato. Con `ALEGRA_EMITIR`
-  apagada (desarrollo), la emisión **termina aquí**.
-- **Paso 1, 400, 401, 402, 403 o 429** → NO_CREADA; se informa y reintentar es una acción explícita
-  del usuario.
-- **Paso 1, timeout, error de red, 500 o 503** → DESCONOCIDO, y se **reconcilia una vez**: se lista
-  por `client_identification + date` y se compara `observations` de nuestro lado (el filtro de
-  Alegra por `observations` no funciona). Si aparece → BORRADOR_CREADO con ese id; si no, el humano
-  revisa Alegra antes de cualquier reintento. **Nunca** se repite el paso 1 automáticamente.
-- **Paso 2:** TIMBRANDO → `success` → EMITIDA; luego se consulta el estado DIAN con trabajos
-  diferidos (por ejemplo a 1, 5 y 30 min) y se avisa al usuario. Un error de validación de esa
-  factura → RECHAZADA **con** `idExterno` (el humano la resuelve en la web de Alegra; nunca otro
-  paso 1).
-- **Paso 2, timeout o error de red** → se **repite el stamp del mismo id** (hasta 3 veces, con
-  espera). **3226** = ya estaba emitida → se consulta la factura y queda EMITIDA.
-- **Al arrancar:** PENDIENTE se reencola (nunca tocó Alegra); CREANDO_BORRADOR pasa a DESCONOCIDO y
-  se reconcilia; BORRADOR_CREADO y TIMBRANDO repiten el paso 2 (es seguro).
+  APROBADO y `Emision` nace en PENDIENTE, con la `date` que se enviará, el modo (`ALEGRA_EMITIR`) y
+  la cuenta de Alegra. Después se encola `emitir` (BullMQ, `jobId = emitir-<emisionId>`,
+  `attempts: 1`, `maxStalledCount: 0`, `concurrency: 1`).
+- **Paso a CREANDO_BORRADOR atómico y guardado antes del POST:** `UPDATE … WHERE estado =
+  'PENDIENTE'`; si no cambia ninguna fila, el trabajo se aborta. `observations =
+  "facturabot:<emisionId>"`. Al arrancar, un candado de una sola instancia (`pg_try_advisory_lock`)
+  impide que dos copias del bot recuperen o emitan a la vez.
+- **Paso 1, cualquier 2xx con id válido (Zod), o 400 que trae la factura creada** → BORRADOR_CREADO y
+  se guarda `idExterno` de inmediato. Con `ALEGRA_EMITIR` apagada (desarrollo), la emisión **termina
+  aquí** y esa fila nunca se timbra, aunque después se encienda la bandera o cambie el token.
+- **Paso 1, 400 sin factura, 401, 402, 403 o 429** → NO_CREADA; se informa y reintentar es una acción
+  explícita del usuario.
+- **Paso 1, timeout, error de red, 5xx, otro código o 2xx que no pasa Zod** → DESCONOCIDO, y se
+  **reconcilia** a 1 y 5 min: se lista por `client_identification` + la `date` guardada, recorriendo
+  todas las páginas, y se compara `observations` de nuestro lado (el filtro de Alegra por
+  `observations` no funciona). Si aparece → BORRADOR_CREADO con ese id; si no, el humano revisa
+  Alegra. El reintento manual vuelve a reconciliar y pide confirmar con botón. **Nunca** se repite el
+  paso 1 automáticamente.
+- **Antes de cada paso 2:** `GET /invoices/{id}` y se exige `observations == facturabot:<emisionId>`
+  (y misma cuenta y modo). Si no coincide → DESCONOCIDO y aviso: nunca se timbra una factura que no
+  creamos.
+- **Paso 2:** TIMBRANDO → resultado validado con Zod **para nuestro id** → `success` → EMITIDA; luego
+  se consulta el estado DIAN con trabajos diferidos (por ejemplo a 1, 5 y 30 min) y se avisa al
+  usuario. Error de validación de esa factura → RECHAZADA **con** `idExterno` (el humano la resuelve
+  en la web de Alegra; nunca otro paso 1).
+- **Paso 2, timeout, red o 5xx** → se **repite el stamp del mismo id** (hasta 3 veces, con espera).
+  **3226** = ya estaba emitida → se consulta y queda EMITIDA. Si los intentos se acaban (o hay 401),
+  queda en TIMBRANDO con aviso y se reintenta al arrancar.
+- **Al arrancar** (con el candado): PENDIENTE se reencola, salvo si lleva más de 2 h, que se pregunta
+  con botones "Emitir / Ya la facturé a mano" (plan B del §9; una PENDIENTE se puede cancelar);
+  CREANDO_BORRADOR pasa a DESCONOCIDO y se reconcilia; BORRADOR_CREADO (solo modo real) y TIMBRANDO
+  repiten el paso 2; EMITIDA con estado DIAN pendiente y RECHAZADA se vuelven a consultar.
 
 ## 5. Puerto `ProveedorFacturacion` y adaptador de Alegra
 
@@ -139,7 +153,9 @@ un proveedor falso (201, 400 con y sin factura, timeout, reinicio).
 - **Requisitos del PC antes de la primera factura real:** respaldo diario **cifrado** de PostgreSQL
   guardado fuera del PC; suspensión desactivada mientras el bot esté en uso (hoy, las sesiones de
   prueba; si algún día corre en horario de tienda, ese horario); sesión del sistema operativo con
-  clave, y disco cifrado si el equipo lo permite.
+  clave, y disco cifrado si el equipo lo permite. Y un **procedimiento de restauración**: con los
+  workers apagados, comparar las facturas de Alegra con `observations` `facturabot:` desde la fecha
+  del respaldo contra `Emision`, y corregir antes de arrancar (si no, se reemitiría lo ya emitido).
 - **Plan B ante una caída:** facturar a mano en la web de Alegra, como hoy. Al volver, el borrador de
   esa venta se cancela en el bot para no emitirla dos veces.
 

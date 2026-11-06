@@ -20,7 +20,8 @@ al final.
 ## Actualización del 2026-11-06: JWT y exploración con la cuenta de prueba
 
 Hecha con `apps/api/scripts/explorar-alegra.ts` contra una **cuenta de prueba no habilitada ante la
-DIAN**, creando solo borradores: el script rechaza `stamp`, `void` y `DELETE`. Las respuestas crudas
+DIAN**, creando solo borradores: el script solo usa GET y POST, rechaza `stamp` y `void`, y se detiene
+si la cuenta tiene numeración electrónica. Las respuestas crudas
 se guardaron fuera del repo y se borraron al terminar. Datos de prueba: ficticios. **Límite general:**
 como la cuenta no está habilitada y nada se timbró, nada de esto confirma cómo se comporta una cuenta
 real al timbrar.

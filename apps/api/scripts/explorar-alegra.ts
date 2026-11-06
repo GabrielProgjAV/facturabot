@@ -5,12 +5,14 @@
  *
  * `--largos` crea además 4 borradores para medir el largo máximo de la descripción por línea.
  *
- * Solo contra la CUENTA DE PRUEBA. Nunca timbra: `pedir` rechaza cualquier ruta o cuerpo con
- * "stamp" o "void", y cualquier DELETE. Las respuestas crudas se guardan en la carpeta de salida;
+ * Solo contra la CUENTA DE PRUEBA: se detiene antes de cualquier POST si la cuenta tiene una
+ * numeración electrónica (señal de cuenta habilitada ante la DIAN). Nunca timbra: `pedir` solo
+ * acepta GET y POST (también al ejecutar) y rechaza cualquier ruta o cuerpo con "stamp" o "void".
+ * Las respuestas crudas se guardan en la carpeta de salida;
  * en la consola solo salen códigos, claves y campos elegidos (nunca el token ni datos de contactos).
  * Todos los datos que envía son ficticios.
  */
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, realpathSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 const BASE = 'https://api.alegra.com/api/v1';
@@ -26,20 +28,39 @@ type Json = any;
 const token = (process.env.ALEGRA_TOKEN ?? '').trim().replace(/^"|"$/g, '');
 if (!token) salir('Falta ALEGRA_TOKEN en .env.');
 
-const salida = path.resolve(process.argv[2] ?? '');
-if (!process.argv[2] || !path.relative(REPO, salida).startsWith('..'))
+/** `carpeta` queda fuera de `repo` (no basta `startsWith('..')`: "..salida" está dentro). */
+function fueraDe(repo: string, carpeta: string): boolean {
+  const relativa = path.relative(repo, carpeta);
+  return (
+    relativa === '..' ||
+    relativa.startsWith('..' + path.sep) ||
+    path.isAbsolute(relativa)
+  );
+}
+
+if (!process.argv[2]) salir('Indica una carpeta de salida FUERA del repo.');
+const salida = path.resolve(process.argv[2]);
+// Primero con la ruta escrita (para no crear nada dentro del repo) y, ya creada, con las rutas
+// reales: resuelven enlaces, junctions y nombres cortos 8.3.
+if (!fueraDe(REPO, salida))
   salir('Indica una carpeta de salida FUERA del repo.');
 mkdirSync(salida, { recursive: true });
+if (!fueraDe(realpathSync.native(REPO), realpathSync.native(salida)))
+  salir('Indica una carpeta de salida FUERA del repo.');
 
 let contador = 0;
+const exito = (status: number): boolean => status >= 200 && status < 300;
 
 /** Una petición a Alegra. Guarda lo enviado y lo recibido en la carpeta de salida. */
 async function pedir(
   paso: string,
-  metodo: 'GET' | 'POST' | 'PUT',
+  metodo: 'GET' | 'POST',
   ruta: string,
   cuerpo?: unknown,
 ): Promise<{ status: number; json: Json }> {
+  // El tipo no basta: al correr con Node los tipos se borran.
+  if (metodo !== 'GET' && metodo !== 'POST')
+    throw new Error(`Bloqueado: "${paso}" usa ${String(metodo)}.`);
   const texto = cuerpo === undefined ? undefined : JSON.stringify(cuerpo);
   if (/stamp|void/i.test(ruta) || (texto && /stamp|void/i.test(texto)))
     throw new Error(`Bloqueado: "${paso}" intentaría timbrar o anular.`);
@@ -54,7 +75,7 @@ async function pedir(
         Accept: 'application/json',
         ...(texto ? { 'Content-Type': 'application/json' } : {}),
       },
-      body: texto,
+      ...(texto ? { body: texto } : {}),
       signal: AbortSignal.timeout(30_000),
     });
     status = respuesta.status;
@@ -87,7 +108,11 @@ async function pedir(
       `Sin permiso para ${metodo} ${ruta.split('?')[0]}: revisa los permisos del token.`,
     );
   }
-  if (status >= 400)
+  if (status === 0 && metodo === 'POST')
+    salir(
+      `Sin respuesta en "${paso}": revisa la cuenta de prueba, pudo quedar algo creado.`,
+    );
+  if (!exito(status))
     console.log(
       `   error: ${json?.message ?? JSON.stringify(json).slice(0, 300)}`,
     );
@@ -131,6 +156,10 @@ async function numeracionPreferida(paso: string): Promise<Json> {
       `   numeración id=${p.id} tipo=${p.documentType} electrónica=${p.isElectronic} ` +
         `preferida=${p.preferred} estado=${p.status} prefijo=${p.prefix ?? ''} ` +
         `siguiente=${p.nextInvoiceNumber}`,
+    );
+  if (plantillas.some((p: Json) => String(p.isElectronic) === 'true'))
+    salir(
+      'La cuenta tiene numeración electrónica: no parece la cuenta de prueba. No se crea nada.',
     );
   return (
     plantillas.find(
@@ -178,7 +207,7 @@ async function crearBorrador(
     paymentMethod: 'CASH',
     observations: referencia,
   });
-  if (status >= 400) return null;
+  if (!exito(status)) return null;
   const linea = json.items?.[0] ?? {};
   console.log(
     `   factura id=${json.id} estado=${json.status} total=${json.total} ` +
@@ -215,7 +244,7 @@ async function main(): Promise<void> {
       price: 1000,
       tax: [{ id: iva.id }],
     });
-    if (creado.status >= 400) salir('No se pudo crear el ítem.');
+    if (!exito(creado.status)) salir('No se pudo crear el ítem.');
     item = creado.json;
   }
   console.log(`   ítem "Pinturas varias" → id ${item.id}`);
@@ -303,7 +332,7 @@ async function main(): Promise<void> {
       'GET',
       `/invoices/${conCf.id}${fields ? `?fields=${fields}` : ''}`,
     );
-    if (status >= 400) continue;
+    if (!exito(status)) continue;
     console.log(
       `   pdf=${JSON.stringify(detalle?.pdf ?? null).slice(0, 80)} xml=${Boolean(detalle?.xml)} ` +
         `eventos=${JSON.stringify(detalle?.events ?? null).slice(0, 200)}`,
