@@ -20,7 +20,15 @@ número, CUFE y PDF. En desarrollo solo se crean **borradores** en la cuenta de 
 - La emisión real queda detrás de `ALEGRA_EMITIR` (Zod, `false` por defecto). Con `false` el
   adaptador nunca envía `stamp`, aunque el borrador esté aprobado. Al arrancar, el log dice en qué modo
   está (sin el token ni el correo).
-- Credenciales solo en `.env`: `ALEGRA_USUARIO` y `ALEGRA_TOKEN`. La cuenta real de la tienda y su token
+- Credenciales solo en `.env`: **`ALEGRA_TOKEN`**, un JWT de Integraciones que va en
+  `Authorization: Bearer` (probado el 2026-11-06 contra `api.alegra.com/api/v1`; no hace falta
+  `ALEGRA_USUARIO`). El JWT **vence** (el de prueba, a los 16 días) y trae dentro datos del usuario y
+  una `api_key`: se trata entero como secreto y nunca se decodifica en los logs.
+- **Vencimiento:** al arrancar, el código lee solo el campo `exp` del token (sin imprimir nada más).
+  Si faltan menos de 5 días, el log lo avisa y el bot se lo dice al usuario autorizado una vez al día;
+  si ya venció, la emisión queda apagada con un aviso claro (los borradores siguen funcionando). Un
+  401 de Alegra se trata como NO_CREADA "token vencido o revocado".
+- La cuenta real de la tienda y su token
   **no se usan** hasta pasar la auditoría externa (2) de CLAUDE.md. Ningún test ni CI llama a Alegra.
 
 ## 3. Script exploratorio (1 o 2 días, cuenta de prueba)
@@ -130,7 +138,9 @@ un proveedor falso (201, 400 con y sin factura, timeout, reinicio).
    obligatorio el `dv`? ¿Cómo separar nombre y apellidos?
 6. ¿El contacto "Consumidor final" sirve en `POST /invoices` por API?
 7. ¿Integran la consulta de adquirentes de la DIAN, y por API?
-8. ¿Se anula por API una factura emitida o solo con nota crédito? ¿Cómo se revoca el token?
+8. ¿Se anula por API una factura emitida o solo con nota crédito? ¿Cómo se revoca el token? ¿Se puede
+   emitir un JWT de Integraciones con vencimiento más largo, o el token clásico (Basic) sigue
+   vigente y sin vencimiento? (La página de autenticación de la API solo documenta Basic.)
 9. (Para la fase 12, no urge) ¿Qué autorización exige un servicio multiempresa sobre la API?
 
 Ya respondida (2026-11-06): la tienda tiene el plan **Contabilidad Emprendedor**, que según la tabla
