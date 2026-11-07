@@ -5,6 +5,8 @@ import { PrismaService } from '../prisma/prisma.service.js';
 import {
   type BorradorFactura,
   conOrigenDeIdentificacion,
+  type DatoCambiado,
+  datosCambiadosSinPedir,
   type ItemsQuitados,
   itemsQuitadosSinPedir,
   leerBorradorFactura,
@@ -71,6 +73,8 @@ export interface RespuestaConversacion {
 interface CambiosSinPedir {
   quitados: ItemsQuitados | null;
   valores: ValorCambiado[];
+  /** Identificación o total. */
+  datos: DatoCambiado[];
 }
 
 /** El borrador tras crear o corregir; con `descartada`, la corrección no se guardó. */
@@ -302,12 +306,14 @@ export class ConversacionService {
     );
     const quitados = itemsQuitadosSinPedir(actual, borrador, texto);
     const valores = valoresCambiadosSinPedir(actual, borrador, texto);
-    if (quitados || valores.length > 0) {
-      // Solo cantidades: nunca descripciones ni valores en los logs (Ley 1581 de 2012).
+    const datos = datosCambiadosSinPedir(actual, borrador, texto);
+    if (quitados || valores.length > 0 || datos.length > 0) {
+      // Solo cantidades y nombres de campo: nunca descripciones, valores ni identificaciones en
+      // los logs (Ley 1581 de 2012).
       this.logger.warn(
-        `Corrección descartada: ${quitados?.cantidad ?? 0} ítems desaparecían y ${valores.length} valores cambiaban sin que el mensaje lo pidiera`,
+        `Corrección descartada: ${quitados?.cantidad ?? 0} ítems desaparecían, ${valores.length} valores cambiaban y cambiaban [${datos.map((d) => d.campo).join(', ')}], sin que el mensaje lo pidiera`,
       );
-      return { fila: pendiente, descartada: { quitados, valores } };
+      return { fila: pendiente, descartada: { quitados, valores, datos } };
     }
     const fila = await this.prisma.borrador.update({
       where: { id: pendiente.id },
@@ -390,7 +396,11 @@ export class ConversacionService {
 }
 
 /** Qué cambiaba la corrección sin pedirlo, y cómo pedirlo si era lo que se quería. */
-function avisoDescartada({ quitados, valores }: CambiosSinPedir): string {
+function avisoDescartada({
+  quitados,
+  valores,
+  datos,
+}: CambiosSinPedir): string {
   const lineas: string[] = [];
   if (quitados) {
     const cuales = quitados.descripciones.length
@@ -405,6 +415,13 @@ function avisoDescartada({ quitados, valores }: CambiosSinPedir): string {
       v.nuevo
         ? `⚠️ Con tu corrección aparecía ${v.descripcion} con ${pesos(v.despues)}, y ese valor no está en tu mensaje.`
         : `⚠️ Con tu corrección, ${v.descripcion} pasaba de ${pesos(v.antes)} a ${pesos(v.despues)}, y tu mensaje no dice ese valor para ese producto.`,
+    );
+  }
+  for (const d of datos) {
+    lineas.push(
+      d.campo === 'identificacion'
+        ? `⚠️ Con tu corrección, el NIT o la cédula pasaba de ${d.antes ?? '(ninguno)'} a ${d.despues ?? '(ninguno)'}, y tu mensaje no dice ${d.despues === null ? 'que lo quite' : 'ese número'}.`
+        : `⚠️ Con tu corrección, el total pasaba de ${d.antes === null ? '(ninguno)' : pesos(d.antes)} a ${d.despues === null ? '(ninguno)' : pesos(d.despues)}, y tu mensaje no dice ${d.despues === null ? 'que lo quite' : 'ese valor'}.`,
     );
   }
   lineas.push(

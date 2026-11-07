@@ -4,6 +4,7 @@ import {
   calcularTotales,
   conOrigenDeIdentificacion,
   DatosBorradorInvalidosError,
+  datosCambiadosSinPedir,
   itemsQuitadosSinPedir,
   leerBorradorFactura,
   camposFaltantes,
@@ -700,5 +701,102 @@ describe('leerBorradorFactura (JSON de la BD validado con Zod)', () => {
     expect(error).toBeInstanceOf(DatosBorradorInvalidosError);
     expect((error as DatosBorradorInvalidosError).campos).toContain(ruta);
     expect((error as Error).message).not.toMatch(/78\.000|900123456|Ana/);
+  });
+});
+
+describe('datosCambiadosSinPedir (identificación o total que cambian sin decirlos)', () => {
+  const conId = (identificacion: string | null): BorradorFactura => ({
+    ...completo,
+    cliente: { ...completo.cliente, identificacion },
+  });
+  const conTotal = (totalEscrito: number | null): BorradorFactura => ({
+    ...completo,
+    totalEscrito,
+  });
+
+  it('sin cambios: nada', () => {
+    expect(datosCambiadosSinPedir(completo, completo, 'x')).toEqual([]);
+  });
+
+  it.each([
+    ['el nit es 900.123.457-5', '900123457-5'],
+    ['nit 900123457 - 5', '900123457-5'],
+    ['es la cédula 1.000.000.001', '1000000001'],
+    ['pasaporte ab-123456', 'pasaporte AB123456'],
+  ])(
+    'identificación dicha en el mensaje ("%s"): se acepta',
+    (mensaje, nueva) => {
+      expect(datosCambiadosSinPedir(completo, conId(nueva), mensaje)).toEqual(
+        [],
+      );
+    },
+  );
+
+  it('solo cambió el formato de la misma identificación: no es un cambio', () => {
+    expect(
+      datosCambiadosSinPedir(conId('900.123.456-8'), conId('900123456-8'), 'x'),
+    ).toEqual([]);
+  });
+
+  it.each([
+    ['el cliente es Acrílicos', '900123457-5'],
+    ['el nit termina en 457', '900123457-5'],
+    ['agrega una brocha de 12 mil', '12000'],
+  ])(
+    'identificación que no está en el mensaje ("%s"): se pregunta',
+    (mensaje, nueva) => {
+      expect(datosCambiadosSinPedir(completo, conId(nueva), mensaje)).toEqual([
+        { campo: 'identificacion', antes: '900123456-8', despues: nueva },
+      ]);
+    },
+  );
+
+  it('identificación inventada donde no había: se pregunta', () => {
+    expect(datosCambiadosSinPedir(conId(null), conId('52111222'), 'x')).toEqual(
+      [{ campo: 'identificacion', antes: null, despues: '52111222' }],
+    );
+  });
+
+  it.each(['quita el nit', 'bórrale la cédula', 'elimina la identificación'])(
+    'quitar la identificación nombrándola ("%s"): se acepta',
+    (mensaje) => {
+      expect(datosCambiadosSinPedir(completo, conId(null), mensaje)).toEqual(
+        [],
+      );
+    },
+  );
+
+  it.each(['el cliente es otro', 'quita la brocha', 'no le quites el nit'])(
+    'identificación perdida sin pedirlo ("%s"): se pregunta',
+    (mensaje) => {
+      expect(datosCambiadosSinPedir(completo, conId(null), mensaje)).toEqual([
+        { campo: 'identificacion', antes: '900123456-8', despues: null },
+      ]);
+    },
+  );
+
+  it.each([
+    ['el total es 150 mil', 150000],
+    ['total 150.000', 150000],
+    ['el total es 150', 150000],
+  ])('total dicho en el mensaje ("%s"): se acepta', (mensaje, total) => {
+    expect(datosCambiadosSinPedir(completo, conTotal(total), mensaje)).toEqual(
+      [],
+    );
+  });
+
+  it('total que no está en el mensaje: se pregunta', () => {
+    expect(
+      datosCambiadosSinPedir(completo, conTotal(150000), 'el total es 140 mil'),
+    ).toEqual([{ campo: 'total', antes: 141000, despues: 150000 }]);
+  });
+
+  it('total perdido: solo vale si el mensaje pide quitarlo', () => {
+    expect(
+      datosCambiadosSinPedir(completo, conTotal(null), 'quita el total'),
+    ).toEqual([]);
+    expect(
+      datosCambiadosSinPedir(completo, conTotal(null), 'el total es raro'),
+    ).toEqual([{ campo: 'total', antes: 141000, despues: null }]);
   });
 });

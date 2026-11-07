@@ -385,6 +385,77 @@ export function valoresCambiadosSinPedir(
   return [...cambiados, ...nuevos];
 }
 
+/** La identificación o el total que una corrección cambió sin que el mensaje los diga. */
+export type DatoCambiado =
+  | { campo: 'identificacion'; antes: string | null; despues: string | null }
+  | { campo: 'total'; antes: number | null; despues: number | null };
+
+/** Solo letras y dígitos, en mayúsculas: "900.123.456-8" y "9001234568" son lo mismo. */
+function soloAlfanumerico(texto: string): string {
+  return normalizar(texto)
+    .replace(/[^\p{L}\p{N}]/gu, '')
+    .toUpperCase();
+}
+
+/** El mensaje pide quitar la identificación ("quita el NIT", "borra la cédula"). */
+const NOMBRA_IDENTIFICACION =
+  /\bn\.?\s?i\.?\s?t\b|c[eé]dula|\bc\.?\s?c\b|identificaci/i;
+
+/**
+ * La identificación o el total que la corrección cambió sin que el mensaje los diga (pendiente
+ * de la revisión de seguridad del PR #5). La IA devuelve el borrador completo y puede cambiar o
+ * inventar un NIT o un total que nadie escribió; eso llegaría a la DIAN.
+ * - Identificación nueva: sus letras y dígitos tienen que estar en el mensaje (sin puntos,
+ *   espacios ni guiones). Perderla solo vale si el mensaje pide quitarla y la nombra.
+ * - Total nuevo: tiene que estar entre los valores del mensaje ("80" cuenta como 80 mil).
+ *   Perderlo solo vale si el mensaje pide quitarlo.
+ */
+export function datosCambiadosSinPedir(
+  antes: BorradorFactura,
+  despues: BorradorFactura,
+  mensaje: string,
+): DatoCambiado[] {
+  const cambiados: DatoCambiado[] = [];
+  const pideQuitar = PIDE_QUITAR.test(mensaje);
+
+  const idAntes = antes.cliente.identificacion;
+  const idDespues = despues.cliente.identificacion;
+  // Solo cambió el formato ("900.123.456-8" → "900123456-8"): no es un cambio.
+  const mismaId =
+    idAntes !== null &&
+    idDespues !== null &&
+    soloAlfanumerico(idAntes) === soloAlfanumerico(idDespues);
+  if (idAntes !== idDespues && !mismaId) {
+    const clave = idDespues === null ? '' : soloAlfanumerico(idDespues);
+    const dicha =
+      idDespues === null
+        ? pideQuitar && NOMBRA_IDENTIFICACION.test(mensaje)
+        : clave !== '' && soloAlfanumerico(mensaje).includes(clave);
+    if (!dicha)
+      cambiados.push({
+        campo: 'identificacion',
+        antes: idAntes,
+        despues: idDespues,
+      });
+  }
+
+  const totalAntes = antes.totalEscrito;
+  const totalDespues = despues.totalEscrito;
+  if (totalAntes !== totalDespues) {
+    const dicho =
+      totalDespues === null
+        ? pideQuitar
+        : valoresDelMensaje(mensaje).has(totalDespues);
+    if (!dicho)
+      cambiados.push({
+        campo: 'total',
+        antes: totalAntes,
+        despues: totalDespues,
+      });
+  }
+  return cambiados;
+}
+
 /** Por qué no se puede aprobar todavía, o null si está lista para aprobar. */
 export function motivoNoAprobable(borrador: BorradorFactura): string | null {
   const faltantes = camposFaltantes(borrador);

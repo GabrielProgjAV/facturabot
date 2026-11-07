@@ -192,6 +192,11 @@ describe('ConversacionService', () => {
         datos: { ...borrador, totalEscrito: 80000 },
       });
       const { servicio, prisma, interprete } = crear(null);
+      // Al corregir el ganador, la IA conserva su total (si lo perdiera, se preguntaría).
+      const corregido = { ...borrador, totalEscrito: 80000 };
+      interprete.interpretar
+        .mockResolvedValueOnce(borrador)
+        .mockResolvedValueOnce(corregido);
       prisma.borrador.findFirst
         .mockResolvedValueOnce(null) // la lectura inicial no lo vio
         .mockResolvedValueOnce(ganador); // tras el P2002, sí
@@ -211,7 +216,7 @@ describe('ConversacionService', () => {
       );
       expect(prisma.borrador.update).toHaveBeenCalledWith({
         where: { id: 'ganador' },
-        data: { datos: borrador, version: { increment: 1 } },
+        data: { datos: corregido, version: { increment: 1 } },
       });
       expect(prisma.borrador.create).toHaveBeenCalledTimes(1);
     });
@@ -328,9 +333,49 @@ describe('ConversacionService', () => {
       await servicio.responder(42, 'x');
 
       expect(warn).toHaveBeenCalledWith(
-        'Corrección descartada: 0 ítems desaparecían y 1 valores cambiaban sin que el mensaje lo pidiera',
+        'Corrección descartada: 0 ítems desaparecían, 1 valores cambiaban y cambiaban [], sin que el mensaje lo pidiera',
       );
       warn.mockRestore();
+    });
+
+    it('una identificación que la IA cambia sin que el mensaje la diga: no se guarda, se pregunta y el log no la lleva', async () => {
+      const { servicio, prisma, interprete } = crear(fila());
+      interprete.interpretar.mockResolvedValueOnce({
+        ...borrador,
+        cliente: { nombre: 'Ana', identificacion: '87654321' }, // cédula ficticia inventada
+      });
+      const warn = vi
+        .spyOn(Logger.prototype, 'warn')
+        .mockImplementation(() => undefined);
+
+      const respuesta = await servicio.responder(42, 'el cliente es Ana');
+
+      expect(prisma.borrador.update).not.toHaveBeenCalled();
+      expect(respuesta.texto).toMatch(
+        /^⚠️ Con tu corrección, el NIT o la cédula pasaba de 12345678 a 87654321, y tu mensaje no dice ese número\./,
+      );
+      expect(warn).toHaveBeenCalledWith(
+        'Corrección descartada: 0 ítems desaparecían, 0 valores cambiaban y cambiaban [identificacion], sin que el mensaje lo pidiera',
+      );
+      warn.mockRestore();
+    });
+
+    it('un total que la IA cambia sin que el mensaje lo diga: no se guarda y se pregunta', async () => {
+      const { servicio, prisma, interprete } = crear(fila());
+      interprete.interpretar.mockResolvedValueOnce({
+        ...borrador,
+        totalEscrito: 60000,
+      });
+
+      const respuesta = await servicio.responder(
+        42,
+        'el total es lo que te dije',
+      );
+
+      expect(prisma.borrador.update).not.toHaveBeenCalled();
+      expect(respuesta.texto).toMatch(
+        /^⚠️ Con tu corrección, el total pasaba de \(ninguno\) a \$\s60\.000, y tu mensaje no dice ese valor\./,
+      );
     });
 
     it('una nota de voz con la identificación la guarda marcada y el resumen advierte', async () => {
