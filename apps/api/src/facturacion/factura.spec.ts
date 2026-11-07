@@ -11,6 +11,7 @@ import {
   camposFaltantes,
   motivoNoAprobable,
   pareceEmpresa,
+  pareceNegocio,
   parsePesos,
   resumenBorrador,
   sumaNoCuadra,
@@ -940,5 +941,57 @@ describe('itemsReemplazadosSinPedir (caso f del set de evaluación)', () => {
     expect(
       itemsReemplazadosSinPedir(conEstuco, { ...conEstuco, items: [] }, 'x'),
     ).toEqual([]);
+  });
+});
+
+describe('pareceNegocio (nombre de negocio sin tipo de sociedad: solo advierte)', () => {
+  it.each([
+    'Ferretería El Tornillo',
+    'PINTURAS DEL VALLE',
+    'Inversiones Ejemplo',
+    'Distribuidora Ficticia',
+    'Fundación Ejemplo',
+    'Gómez e Hijos',
+  ])('"%s": parece un negocio', (nombre) => {
+    expect(pareceNegocio(nombre)).toBe(true);
+  });
+
+  it.each(['Rosa', 'Marta Gómez', 'Pinturas Sol SAS', 'Grupito', null])(
+    '"%s": no (persona, o ya tiene tipo de sociedad y lo cubre pareceEmpresa)',
+    (nombre) => {
+      expect(pareceNegocio(nombre)).toBe(false);
+    },
+  );
+
+  const negocio = (identificacion: string): BorradorFactura => ({
+    ...completo,
+    cliente: { nombre: 'Ferretería El Tornillo', identificacion },
+  });
+
+  it.each(['12345678', '1000000001'])(
+    'con forma de cédula (%s, ficticia): advierte en el resumen pero sigue aprobable',
+    (identificacion) => {
+      const borrador = negocio(identificacion);
+
+      expect(resumenBorrador(borrador)).toContain(
+        '⚠️ El cliente parece un negocio.',
+      );
+      expect(motivoNoAprobable(borrador)).toBeNull();
+    },
+  );
+
+  it('con NIT de empresa (ficticio) no advierte', () => {
+    expect(resumenBorrador(negocio('900123456-8'))).not.toContain(
+      'parece un negocio',
+    );
+  });
+
+  it('una persona con cédula no recibe la advertencia', () => {
+    const rosa: BorradorFactura = {
+      ...completo,
+      cliente: { nombre: 'Rosa', identificacion: '52111222' },
+    };
+
+    expect(resumenBorrador(rosa)).not.toContain('parece un negocio');
   });
 });

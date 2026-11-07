@@ -18,6 +18,25 @@ export function pareceEmpresa(nombre: string | null): boolean {
   return nombre !== null && NOMBRE_DE_EMPRESA.test(nombre.trim());
 }
 
+/**
+ * Palabras de nombres de negocio que no son un tipo de sociedad ("Ferretería El Tornillo",
+ * "Inversiones Ejemplo"). Heurística: no distingue una empresa de una persona natural comerciante,
+ * cuyo NIT es su cédula; por eso solo advierte, no bloquea la aprobación.
+ */
+const NOMBRE_DE_NEGOCIO =
+  /\b(?:ferreteria|pinturas?|distribuidora|distribuciones|comercializadora|importadora|inversiones|constructora|construcciones|almacen(?:es)?|deposito|industrias?|grupo|corporacion|fundacion|asociacion|cooperativa|hermanos|servicios|soluciones|taller|drogueria|panaderia|restaurante|hotel|colegio|clinica|e\s+hijos|y\s+asociados)\b/;
+
+/** true si el nombre parece de un negocio sin tipo de sociedad (ver `NOMBRE_DE_NEGOCIO`). */
+export function pareceNegocio(nombre: string | null): boolean {
+  return (
+    nombre !== null &&
+    !pareceEmpresa(nombre) &&
+    NOMBRE_DE_NEGOCIO.test(
+      nombre.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase(),
+    )
+  );
+}
+
 /** Línea de la factura tal como la entendimos (valor = total de la línea, sin IVA). */
 export interface ItemBorrador {
   descripcion: string;
@@ -541,6 +560,19 @@ export function resumenBorrador(
     );
   }
   if (id?.problema) lineas.push(`⚠️ ${id.problema}`);
+  // Un NIT de empresa al que le falta un dígito tiene forma de cédula; con un nombre de negocio
+  // sin tipo de sociedad no se sabe si es empresa o persona natural: se advierte (pendiente de la
+  // revisión de seguridad del PR #5).
+  if (
+    id &&
+    !id.problema &&
+    (id.forma === 'cedula_antigua' || id.forma === 'cedula_nuip') &&
+    pareceNegocio(nombre)
+  ) {
+    lineas.push(
+      '⚠️ El cliente parece un negocio. Si es una empresa (S.A.S., Ltda., fundación…), su NIT tiene 9 dígitos más el dígito de verificación; si es una persona natural, su NIT es la cédula. Revisa el número antes de aprobar.',
+    );
+  }
   if (borrador.cliente.identificacionPorVoz) {
     lineas.push(
       '⚠️ La identificación vino de una nota de voz: revisa que esté completa antes de aprobar.',
