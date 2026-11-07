@@ -20,6 +20,9 @@ const borrador: BorradorFactura = {
   totalEscrito: null,
 };
 
+/** Primer mensaje con todos los datos del borrador: nada queda vacío al crear. */
+const MENSAJE_NUEVO = 'factura a Ana cc 12345678, vinilo 50 mil'; // cédula ficticia
+
 interface Fila {
   id: string;
   chatId: bigint;
@@ -136,10 +139,10 @@ describe('ConversacionService', () => {
     it('sin borrador pendiente, crea uno nuevo y pide mostrar la versión 1 con el botón', async () => {
       const { servicio, prisma, interprete } = crear(null);
 
-      const respuesta = await servicio.responder(42, 'factura a Ana');
+      const respuesta = await servicio.responder(42, MENSAJE_NUEVO);
 
       expect(interprete.interpretar).toHaveBeenCalledWith(
-        'factura a Ana',
+        MENSAJE_NUEVO,
         undefined,
       );
       expect(prisma.borrador.create).toHaveBeenCalledWith({
@@ -179,7 +182,7 @@ describe('ConversacionService', () => {
       const { servicio, interprete } = crear(null);
       interprete.interpretar.mockResolvedValueOnce(sinNit);
 
-      const respuesta = await servicio.responder(42, 'factura a Ana');
+      const respuesta = await servicio.responder(42, MENSAJE_NUEVO);
 
       expect(respuesta.mostrar?.aprobable).toBe(false);
       expect(respuesta.texto).toContain('Escribe los datos que faltan');
@@ -415,6 +418,38 @@ describe('ConversacionService', () => {
       );
     });
 
+    it('al crear, lo que la IA inventó queda vacío, se avisa y el log no lleva valores', async () => {
+      const { servicio, prisma } = crear(null);
+      const warn = vi
+        .spyOn(Logger.prototype, 'warn')
+        .mockImplementation(() => undefined);
+
+      // La IA devuelve cédula y valor, pero el mensaje no los trae.
+      const respuesta = await servicio.responder(
+        42,
+        'factura a Ana por vinilo',
+      );
+
+      expect(prisma.borrador.create).toHaveBeenCalledWith({
+        data: {
+          chatId: 42n,
+          datos: {
+            cliente: { nombre: 'Ana', identificacion: null },
+            items: [{ descripcion: 'vinilo', valor: null }],
+            totalEscrito: null,
+          },
+        },
+      });
+      expect(respuesta.texto).toMatch(
+        /^⚠️ Entendí datos que no están escritos en tu mensaje y los dejé vacíos \(❓\): NIT o cédula: 12345678; vinilo: \$\s50\.000\. Si son correctos, escríbelos\./,
+      );
+      expect(respuesta.mostrar?.aprobable).toBe(false);
+      expect(warn).toHaveBeenCalledWith(
+        'Borrador nuevo: 2 datos que no estaban en el mensaje quedaron vacíos [identificacion, item]',
+      );
+      warn.mockRestore();
+    });
+
     it('una nota de voz con la identificación la guarda marcada y el resumen advierte', async () => {
       const { servicio, prisma, interprete } = crear(null);
       interprete.interpretar.mockResolvedValueOnce({
@@ -422,7 +457,11 @@ describe('ConversacionService', () => {
         cliente: { nombre: 'Rosa', identificacion: '52111222' }, // cédula ficticia
       });
 
-      const respuesta = await servicio.responder(42, 'factura a Rosa', true);
+      const respuesta = await servicio.responder(
+        42,
+        'factura a Rosa cc 52111222, vinilo 50 mil',
+        true,
+      );
 
       expect(prisma.borrador.create).toHaveBeenCalledWith({
         data: {
@@ -446,7 +485,7 @@ describe('ConversacionService', () => {
     it('el mismo mensaje escrito no lleva la marca ni la advertencia', async () => {
       const { servicio, prisma } = crear(null);
 
-      const respuesta = await servicio.responder(42, 'factura a Ana');
+      const respuesta = await servicio.responder(42, MENSAJE_NUEVO);
 
       expect(prisma.borrador.create).toHaveBeenCalledWith({
         data: { chatId: 42n, datos: borrador },
@@ -458,7 +497,7 @@ describe('ConversacionService', () => {
       const { servicio, prisma } = crear(null);
       prisma.borrador.create.mockRejectedValueOnce(new Error('sin conexión'));
 
-      await expect(servicio.responder(42, 'factura a Ana')).rejects.toThrow(
+      await expect(servicio.responder(42, MENSAJE_NUEVO)).rejects.toThrow(
         'sin conexión',
       );
       expect(prisma.borrador.update).not.toHaveBeenCalled();
@@ -711,10 +750,10 @@ describe('ConversacionService', () => {
         fila({ actualizadoEn: QUIETO }),
       );
 
-      const respuesta = await servicio.responder(42, 'factura a Pedro');
+      const respuesta = await servicio.responder(42, MENSAJE_NUEVO);
 
       expect(interprete.interpretar).toHaveBeenCalledWith(
-        'factura a Pedro',
+        MENSAJE_NUEVO,
         undefined,
       );
       expect(prisma.borrador.updateMany).toHaveBeenCalledWith({
@@ -737,6 +776,27 @@ describe('ConversacionService', () => {
       });
     });
 
+    it('al reemplazar un quieto, el borrador nuevo también vacía lo que no está en el mensaje', async () => {
+      const { servicio, prisma } = crear(fila({ actualizadoEn: QUIETO }));
+
+      const respuesta = await servicio.responder(
+        42,
+        'factura a Ana por vinilo',
+      );
+
+      expect(prisma.borrador.create).toHaveBeenCalledWith({
+        data: {
+          chatId: 42n,
+          datos: expect.objectContaining({
+            cliente: { nombre: 'Ana', identificacion: null },
+          }) as unknown,
+        },
+      });
+      expect(respuesta.texto).toContain(
+        'Lo dejé cancelado y empecé uno nuevo con tu mensaje.\n\n⚠️ Entendí datos que no están escritos',
+      );
+    });
+
     it('quieto con datos inválidos: se cancela y se reemplaza igual, con el aviso verdadero y sin nombre', async () => {
       const { servicio, prisma } = crear(
         fila({
@@ -748,7 +808,7 @@ describe('ConversacionService', () => {
         }),
       );
 
-      const respuesta = await servicio.responder(42, 'factura a Pedro');
+      const respuesta = await servicio.responder(42, MENSAJE_NUEVO);
 
       expect(prisma.borrador.updateMany).toHaveBeenCalledWith({
         where: { id: 'b1', estado: 'PENDIENTE', version: 1 },
@@ -772,7 +832,7 @@ describe('ConversacionService', () => {
         }),
       );
 
-      const respuesta = await servicio.responder(42, 'factura a Pedro');
+      const respuesta = await servicio.responder(42, MENSAJE_NUEVO);
 
       expect(respuesta.texto).toContain(`del ${fechaCorta(QUIETO)}. Lo dejé`);
     });
@@ -783,7 +843,7 @@ describe('ConversacionService', () => {
       );
       interprete.interpretar.mockRejectedValueOnce(new Error('timeout'));
 
-      await expect(servicio.responder(42, 'factura a Pedro')).rejects.toThrow(
+      await expect(servicio.responder(42, MENSAJE_NUEVO)).rejects.toThrow(
         'timeout',
       );
       expect(prisma.$transaction).not.toHaveBeenCalled();
@@ -794,7 +854,7 @@ describe('ConversacionService', () => {
       const { servicio, prisma } = crear(fila({ actualizadoEn: QUIETO }));
       prisma.borrador.updateMany.mockResolvedValueOnce({ count: 0 });
 
-      await expect(servicio.responder(42, 'factura a Pedro')).rejects.toThrow(
+      await expect(servicio.responder(42, MENSAJE_NUEVO)).rejects.toThrow(
         'cambió antes de cancelarlo',
       );
       expect(prisma.borrador.create).not.toHaveBeenCalled();

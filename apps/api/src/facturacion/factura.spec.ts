@@ -15,6 +15,7 @@ import {
   pareceNegocio,
   parsePesos,
   resumenBorrador,
+  sinDatosNoDichos,
   sumaNoCuadra,
   sumaParcialSupera,
   totalBase,
@@ -1174,5 +1175,77 @@ describe('identificación: mismo número con otro DV', () => {
     ).toEqual([
       { campo: 'identificacion', antes: '900123456-8', despues: '900123456-3' },
     ]);
+  });
+});
+
+describe('sinDatosNoDichos (al crear, nada que no esté en el mensaje)', () => {
+  const leido: BorradorFactura = {
+    cliente: { nombre: 'Marta', identificacion: '52111222' },
+    items: [
+      { descripcion: 'estuco', valor: 40000 },
+      { descripcion: 'brocha', valor: 12000 },
+    ],
+    totalEscrito: 52000,
+  };
+
+  it('con todo escrito, el borrador queda igual', () => {
+    const mensaje =
+      'factura a Marta cc 52111222, estuco 40 mil y brocha 12.000, total 52 mil';
+
+    expect(sinDatosNoDichos(leido, mensaje)).toEqual({
+      borrador: leido,
+      vaciados: [],
+    });
+  });
+
+  it('"80" cuenta como 80 mil, como al corregir', () => {
+    const vinilo: BorradorFactura = {
+      ...leido,
+      cliente: { nombre: null, identificacion: null },
+      items: [{ descripcion: 'vinilo', valor: 80000 }],
+      totalEscrito: null,
+    };
+
+    expect(sinDatosNoDichos(vinilo, 'vinilo a 80').vaciados).toEqual([]);
+  });
+
+  it('lo que la IA leyó sin estar escrito queda vacío y se informa', () => {
+    const { borrador, vaciados } = sinDatosNoDichos(
+      leido,
+      'factura a Marta, estuco 40 mil y una brocha',
+    );
+
+    expect(borrador).toEqual({
+      cliente: { nombre: 'Marta', identificacion: null },
+      items: [
+        { descripcion: 'estuco', valor: 40000 },
+        { descripcion: 'brocha', valor: null },
+      ],
+      totalEscrito: null,
+    });
+    expect(vaciados).toEqual([
+      { campo: 'identificacion', valor: '52111222' },
+      { campo: 'total', valor: 52000 },
+      { campo: 'item', descripcion: 'brocha', valor: 12000 },
+    ]);
+  });
+
+  it('un nombre que no está en el mensaje también queda vacío', () => {
+    const { borrador, vaciados } = sinDatosNoDichos(
+      leido,
+      'estuco 40 mil, brocha 12 mil, cc 52111222, total 52 mil',
+    );
+
+    expect(borrador.cliente.nombre).toBeNull();
+    expect(vaciados).toEqual([{ campo: 'nombre', valor: 'Marta' }]);
+  });
+
+  it('un total que no sigue a "total" (el número es de otro dato) queda vacío', () => {
+    const { vaciados } = sinDatosNoDichos(
+      { ...leido, totalEscrito: 40000 },
+      'factura a Marta cc 52111222, estuco 40 mil y brocha 12 mil',
+    );
+
+    expect(vaciados).toEqual([{ campo: 'total', valor: 40000 }]);
   });
 });

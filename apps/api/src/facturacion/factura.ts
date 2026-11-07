@@ -626,6 +626,60 @@ export function datosCambiadosSinPedir(
   return cambiados;
 }
 
+/** Un dato que la IA leyó en el primer mensaje sin que estuviera escrito: se dejó vacío. */
+export type DatoVaciado =
+  | { campo: 'nombre' | 'identificacion'; valor: string }
+  | { campo: 'total'; valor: number }
+  | { campo: 'item'; descripcion: string; valor: number };
+
+/** Un borrador sin ningún dato: lo que había "antes" del primer mensaje. */
+const BORRADOR_VACIO: BorradorFactura = {
+  cliente: { nombre: null, identificacion: null },
+  items: [],
+  totalEscrito: null,
+};
+
+/**
+ * Al crear un borrador, deja vacío (null, ❓ en el resumen) todo dato que no esté escrito en el
+ * mensaje: nombre, identificación, total y el valor de cada ítem (decisión de Gabriel del
+ * 2026-11-07, revisión de seguridad del PR #9). Son las mismas reglas que en una corrección,
+ * comparando contra un borrador vacío: nunca se guarda un dato que la IA inventó.
+ */
+export function sinDatosNoDichos(
+  borrador: BorradorFactura,
+  mensaje: string,
+): { borrador: BorradorFactura; vaciados: DatoVaciado[] } {
+  const vaciados: DatoVaciado[] = [];
+  const cliente = { ...borrador.cliente };
+  let { totalEscrito } = borrador;
+  for (const dato of datosCambiadosSinPedir(
+    BORRADOR_VACIO,
+    borrador,
+    mensaje,
+  )) {
+    if (dato.campo === 'total') {
+      if (dato.despues !== null)
+        vaciados.push({ campo: 'total', valor: dato.despues });
+      totalEscrito = null;
+    } else {
+      if (dato.despues !== null)
+        vaciados.push({ campo: dato.campo, valor: dato.despues });
+      cliente[dato.campo] = null;
+    }
+  }
+  const enMensaje = valoresDelMensaje(mensaje);
+  const items = borrador.items.map((item) => {
+    if (item.valor === null || enMensaje.has(item.valor)) return item;
+    vaciados.push({
+      campo: 'item',
+      descripcion: item.descripcion,
+      valor: item.valor,
+    });
+    return { ...item, valor: null };
+  });
+  return { borrador: { cliente, items, totalEscrito }, vaciados };
+}
+
 /** Por qué no se puede aprobar todavía, o null si está lista para aprobar. */
 export function motivoNoAprobable(borrador: BorradorFactura): string | null {
   const faltantes = camposFaltantes(borrador);
