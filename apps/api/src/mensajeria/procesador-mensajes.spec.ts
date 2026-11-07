@@ -8,6 +8,7 @@ import {
   procesarMensaje,
   VozDemasiadoPesadaError,
 } from './procesador-mensajes.js';
+import { DatosBorradorInvalidosError } from '../facturacion/factura.js';
 import { notaOggSintetica } from '../voz/ogg-sintetico.spec-util.js';
 
 /** Nota de voz sintética de 10 s (sin audio real). */
@@ -246,6 +247,18 @@ describe('procesarMensaje: texto', () => {
     expect(deps.responder).toHaveBeenCalledTimes(1);
     expect(deps.esperar).not.toHaveBeenCalled();
     expectEnviado(deps, MENSAJES_FALLA.texto);
+  });
+
+  it('datos del borrador inválidos en la BD: no reintenta y pide cancelar', async () => {
+    const { deps } = crearDeps();
+    deps.responder.mockRejectedValue(
+      new DatosBorradorInvalidosError(['items.0.valor']),
+    );
+
+    await procesarMensaje(texto(), 'j1', deps);
+
+    expect(deps.responder).toHaveBeenCalledTimes(1);
+    expectEnviado(deps, MENSAJES_FALLA.datosInvalidos);
   });
 
   it('otro error (p. ej. JSON inválido de la IA): no reintenta y avisa', async () => {

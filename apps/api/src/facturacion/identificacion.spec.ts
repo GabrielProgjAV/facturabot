@@ -79,6 +79,31 @@ describe('analizarIdentificacion: forma (solo reglas de fuentes oficiales)', () 
     expect(resultado.problema).toBeNull();
   });
 
+  it.each([
+    ['5', 'Tiene 1 dígito:'],
+    ['123', 'Tiene 3 dígitos:'],
+    ['1.23', 'Tiene 3 dígitos:'],
+    ['NIT 456', 'Tiene 3 dígitos:'],
+    ['456-7', 'Tiene 3 dígitos:'],
+  ])(
+    'menos de 4 dígitos ("%s", ficticio): no es aprobable y pregunta',
+    (texto, inicio) => {
+      const resultado = analizarIdentificacion(texto);
+
+      expect(resultado.forma).toBe('desconocida');
+      expect(resultado.problema).toBe(
+        `${inicio} es muy corto para una cédula o un NIT. ¿Lo revisas?`,
+      );
+    },
+  );
+
+  it('4 dígitos (ficticio): primera longitud aceptada como cédula antigua', () => {
+    const resultado = analizarIdentificacion('1234');
+
+    expect(resultado.forma).toBe('cedula_antigua');
+    expect(resultado.problema).toBeNull();
+  });
+
   it('11 dígitos: avisa con la cuenta de dígitos y pregunta', () => {
     const resultado = analizarIdentificacion('10000000012');
 
