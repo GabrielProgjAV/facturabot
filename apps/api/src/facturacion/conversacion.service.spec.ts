@@ -333,9 +333,46 @@ describe('ConversacionService', () => {
       await servicio.responder(42, 'x');
 
       expect(warn).toHaveBeenCalledWith(
-        'Corrección descartada: 0 ítems desaparecían, 1 valores cambiaban y cambiaban [], sin que el mensaje lo pidiera',
+        'Corrección descartada: 0 ítems desaparecían, 0 se reemplazaban, 1 valores cambiaban y cambiaban [], sin que el mensaje lo pidiera',
       );
       warn.mockRestore();
+    });
+
+    it('caso f: la IA reemplaza un ítem que el mensaje no nombra: no se guarda y se pregunta', async () => {
+      const conEstuco: BorradorFactura = {
+        cliente: { nombre: 'Marta', identificacion: null },
+        items: [{ descripcion: 'estuco', valor: 40000 }],
+        totalEscrito: null,
+      };
+      const { servicio, prisma, interprete } = crear(
+        fila({ datos: conEstuco }),
+      );
+      interprete.interpretar.mockResolvedValueOnce({
+        ...conEstuco,
+        items: [{ descripcion: '3 galones de vinilo', valor: 40000 }],
+      });
+
+      const respuesta = await servicio.responder(
+        42,
+        'el vinilo son 3 galones y quita la brocha',
+      );
+
+      expect(prisma.borrador.update).not.toHaveBeenCalled();
+      expect(respuesta.texto).toMatch(
+        /^⚠️ Con tu corrección se cambiaba por otro producto: estuco, y tu mensaje no lo nombra\./,
+      );
+    });
+
+    it('un reemplazo pedido por su nombre sí se guarda', async () => {
+      const { servicio, prisma, interprete } = crear(fila());
+      interprete.interpretar.mockResolvedValueOnce({
+        ...borrador,
+        items: [{ descripcion: 'esmalte', valor: 50000 }],
+      });
+
+      await servicio.responder(42, 'cambia el vinilo por esmalte');
+
+      expect(prisma.borrador.update).toHaveBeenCalled();
     });
 
     it('una identificación que la IA cambia sin que el mensaje la diga: no se guarda, se pregunta y el log no la lleva', async () => {
@@ -355,7 +392,7 @@ describe('ConversacionService', () => {
         /^⚠️ Con tu corrección, el NIT o la cédula pasaba de 12345678 a 87654321, y tu mensaje no dice ese número\./,
       );
       expect(warn).toHaveBeenCalledWith(
-        'Corrección descartada: 0 ítems desaparecían, 0 valores cambiaban y cambiaban [identificacion], sin que el mensaje lo pidiera',
+        'Corrección descartada: 0 ítems desaparecían, 0 se reemplazaban, 0 valores cambiaban y cambiaban [identificacion], sin que el mensaje lo pidiera',
       );
       warn.mockRestore();
     });

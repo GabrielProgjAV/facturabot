@@ -6,6 +6,7 @@ import {
   DatosBorradorInvalidosError,
   datosCambiadosSinPedir,
   itemsQuitadosSinPedir,
+  itemsReemplazadosSinPedir,
   leerBorradorFactura,
   camposFaltantes,
   motivoNoAprobable,
@@ -863,5 +864,81 @@ describe('datosCambiadosSinPedir (identificación o total que cambian sin decirl
     expect(
       datosCambiadosSinPedir(completo, conTotal(null), 'el total es raro'),
     ).toEqual([{ campo: 'total', antes: 141000, despues: null }]);
+  });
+});
+
+describe('itemsReemplazadosSinPedir (caso f del set de evaluación)', () => {
+  const conEstuco: BorradorFactura = {
+    cliente: { nombre: 'Marta', identificacion: null },
+    items: [{ descripcion: 'estuco', valor: 40000 }],
+    totalEscrito: null,
+  };
+  const conVinilo = (valor: number | null): BorradorFactura => ({
+    ...conEstuco,
+    items: [{ descripcion: '3 galones de vinilo', valor }],
+  });
+
+  it.each([40000, null])(
+    'la IA cambia el estuco por vinilo (valor %s) sin que el mensaje nombre el estuco: lo devuelve',
+    (valor) => {
+      expect(
+        itemsReemplazadosSinPedir(
+          conEstuco,
+          conVinilo(valor),
+          'el vinilo son 3 galones y quita la brocha',
+        ),
+      ).toEqual(['estuco']);
+    },
+  );
+
+  it.each([
+    'cambia el estuco por 3 galones de vinilo',
+    'en vez de estuco, vinilo',
+  ])('"%s" nombra el estuco: no es un problema', (mensaje) => {
+    expect(
+      itemsReemplazadosSinPedir(conEstuco, conVinilo(40000), mensaje),
+    ).toEqual([]);
+  });
+
+  it('con un ítem más y otro reemplazado, devuelve solo el reemplazado', () => {
+    const despues: BorradorFactura = {
+      ...completo,
+      items: [
+        completo.items[0],
+        { descripcion: '1/2 esmalte azul', valor: 45000 },
+        completo.items[2],
+        { descripcion: 'brocha', valor: 12000 },
+      ],
+    };
+
+    expect(
+      itemsReemplazadosSinPedir(
+        completo,
+        despues,
+        'agrega una brocha de 12 mil',
+      ),
+    ).toEqual(['1/2 laca azul']);
+  });
+
+  it('mismos ítems, solo con otro valor, o con un ítem nuevo: nada', () => {
+    const otroValor: BorradorFactura = {
+      ...completo,
+      items: completo.items.map((i, n) =>
+        n === 0 ? { ...i, valor: 80000 } : i,
+      ),
+    };
+    const conBrocha: BorradorFactura = {
+      ...completo,
+      items: [...completo.items, { descripcion: 'brocha', valor: 12000 }],
+    };
+
+    expect(itemsReemplazadosSinPedir(completo, otroValor, 'x')).toEqual([]);
+    expect(itemsReemplazadosSinPedir(completo, conBrocha, 'x')).toEqual([]);
+  });
+
+  it('si la cantidad baja, no aplica (lo cubre itemsQuitadosSinPedir)', () => {
+    expect(
+      itemsReemplazadosSinPedir(conEstuco, { ...conEstuco, items: [] }, 'x'),
+    ).toEqual([]);
   });
 });

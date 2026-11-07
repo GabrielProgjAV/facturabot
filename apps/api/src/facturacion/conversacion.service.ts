@@ -9,6 +9,7 @@ import {
   datosCambiadosSinPedir,
   type ItemsQuitados,
   itemsQuitadosSinPedir,
+  itemsReemplazadosSinPedir,
   leerBorradorFactura,
   motivoNoAprobable,
   pesos,
@@ -72,6 +73,8 @@ export interface RespuestaConversacion {
 /** Lo que una corrección cambiaba sin que el mensaje lo pidiera; por eso no se guardó. */
 interface CambiosSinPedir {
   quitados: ItemsQuitados | null;
+  /** Descripciones de ítems que la IA cambió por otros sin que el mensaje los nombrara. */
+  reemplazados: string[];
   valores: ValorCambiado[];
   /** Identificación o total. */
   datos: DatoCambiado[];
@@ -305,15 +308,24 @@ export class ConversacionService {
       porVoz,
     );
     const quitados = itemsQuitadosSinPedir(actual, borrador, texto);
+    const reemplazados = itemsReemplazadosSinPedir(actual, borrador, texto);
     const valores = valoresCambiadosSinPedir(actual, borrador, texto);
     const datos = datosCambiadosSinPedir(actual, borrador, texto);
-    if (quitados || valores.length > 0 || datos.length > 0) {
+    if (
+      quitados ||
+      reemplazados.length > 0 ||
+      valores.length > 0 ||
+      datos.length > 0
+    ) {
       // Solo cantidades y nombres de campo: nunca descripciones, valores ni identificaciones en
       // los logs (Ley 1581 de 2012).
       this.logger.warn(
-        `Corrección descartada: ${quitados?.cantidad ?? 0} ítems desaparecían, ${valores.length} valores cambiaban y cambiaban [${datos.map((d) => d.campo).join(', ')}], sin que el mensaje lo pidiera`,
+        `Corrección descartada: ${quitados?.cantidad ?? 0} ítems desaparecían, ${reemplazados.length} se reemplazaban, ${valores.length} valores cambiaban y cambiaban [${datos.map((d) => d.campo).join(', ')}], sin que el mensaje lo pidiera`,
       );
-      return { fila: pendiente, descartada: { quitados, valores, datos } };
+      return {
+        fila: pendiente,
+        descartada: { quitados, reemplazados, valores, datos },
+      };
     }
     const fila = await this.prisma.borrador.update({
       where: { id: pendiente.id },
@@ -398,6 +410,7 @@ export class ConversacionService {
 /** Qué cambiaba la corrección sin pedirlo, y cómo pedirlo si era lo que se quería. */
 function avisoDescartada({
   quitados,
+  reemplazados,
   valores,
   datos,
 }: CambiosSinPedir): string {
@@ -408,6 +421,11 @@ function avisoDescartada({
       : '';
     lineas.push(
       `⚠️ Con tu corrección desaparecían ${quitados.cantidad} producto(s), y tu mensaje no pide quitarlos por su nombre${cuales}.`,
+    );
+  }
+  if (reemplazados.length > 0) {
+    lineas.push(
+      `⚠️ Con tu corrección se cambiaba por otro producto: ${reemplazados.join(', ')}, y tu mensaje no lo nombra.`,
     );
   }
   for (const v of valores) {

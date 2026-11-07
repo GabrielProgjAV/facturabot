@@ -301,8 +301,8 @@ export interface ItemsQuitados {
  * desaparece se pregunta, nunca se deja pasar en silencio). Para quitarlo, el mensaje tiene que
  * pedirlo ("quita", "elimina", "borra") y nombrar cada ítem que se va (hallazgo 4 de la auditoría
  * del PR #3): "quita la brocha" no permite que desaparezca también el vinilo.
- * Límite conocido: si la IA reemplaza un ítem por otro (caso f del set de evaluación), no se
- * detecta; tampoco reconoce "saca" o "ya no va" como pedido de quitar (se pregunta de más).
+ * Un ítem reemplazado por otro (caso f) lo detecta `itemsReemplazadosSinPedir`. Límite conocido:
+ * no reconoce "saca" o "ya no va" como pedido de quitar (se pregunta de más).
  */
 export function itemsQuitadosSinPedir(
   antes: BorradorFactura,
@@ -321,6 +321,27 @@ export function itemsQuitadosSinPedir(
   );
   if (sinNombrar.length === 0) return null;
   return { cantidad, descripciones: sinNombrar.map((i) => i.descripcion) };
+}
+
+/**
+ * Ítems que una corrección reemplazó por otros sin que el mensaje los nombrara (caso f del set de
+ * evaluación: "el vinilo son 3 galones y quita la brocha" sobre un borrador con estuco, y la IA
+ * devuelve vinilo en lugar del estuco). Aplica cuando la cantidad de ítems no baja (si baja, lo
+ * cubre `itemsQuitadosSinPedir`): cada ítem de antes que ya no está con la misma descripción
+ * tiene que estar nombrado en el mensaje ("cambia el estuco por vinilo"). Si la IA solo reescribe
+ * una descripción sin que se lo pidan, también se pregunta (de más, nunca de menos).
+ */
+export function itemsReemplazadosSinPedir(
+  antes: BorradorFactura,
+  despues: BorradorFactura,
+  mensaje: string,
+): string[] {
+  if (despues.items.length < antes.items.length) return [];
+  const { faltan } = emparejar(antes.items, despues.items);
+  const palabrasMensaje = palabras(mensaje);
+  return faltan
+    .filter((item) => !nombraItem(item, antes.items, palabrasMensaje))
+    .map((item) => item.descripcion);
 }
 
 /** Un ítem que se conservó con otro valor, o uno nuevo o reescrito con un valor que no se dijo. */
