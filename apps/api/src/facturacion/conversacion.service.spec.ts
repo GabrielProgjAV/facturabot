@@ -737,6 +737,30 @@ describe('ConversacionService', () => {
       });
     });
 
+    it('quieto con datos inválidos: se cancela y se reemplaza igual, con el aviso verdadero y sin nombre', async () => {
+      const { servicio, prisma } = crear(
+        fila({
+          actualizadoEn: QUIETO,
+          datos: {
+            ...borrador,
+            items: [{ descripcion: 'vinilo', valor: '50' }],
+          },
+        }),
+      );
+
+      const respuesta = await servicio.responder(42, 'factura a Pedro');
+
+      expect(prisma.borrador.updateMany).toHaveBeenCalledWith({
+        where: { id: 'b1', estado: 'PENDIENTE', version: 1 },
+        data: { estado: 'CANCELADO' },
+      });
+      expect(respuesta.texto).toMatch(
+        new RegExp(
+          `^📝 Tenías un borrador sin aprobar del ${fechaCorta(QUIETO)}\\. Lo dejé cancelado`,
+        ),
+      );
+    });
+
     it('sin nombre de cliente, el aviso no lleva paréntesis', async () => {
       const { servicio } = crear(
         fila({

@@ -5,6 +5,7 @@ import { PrismaService } from '../prisma/prisma.service.js';
 import {
   type BorradorFactura,
   conOrigenDeIdentificacion,
+  DatosBorradorInvalidosError,
   type DatoCambiado,
   datosCambiadosSinPedir,
   type ItemsQuitados,
@@ -144,9 +145,20 @@ export class ConversacionService {
     }
 
     if (pendiente && quieto(pendiente)) {
+      // Antes de reemplazar: si se leyera después y los datos viejos fueran inválidos, el error
+      // diría "no lo toqué" con el viejo ya cancelado y el nuevo creado. Con datos inválidos el
+      // aviso va sin nombre: el viejo se cancela igual, que es lo que se le pediría al usuario.
+      let nombre: string | null = null;
+      try {
+        nombre = datosDe(pendiente).cliente.nombre;
+      } catch (err) {
+        if (!(err instanceof DatosBorradorInvalidosError)) throw err;
+        this.logger.warn(
+          'Borrador quieto con datos inválidos: se cancela al reemplazarlo',
+        );
+      }
       const nuevo = await this.reemplazar(pendiente, texto, porVoz);
       const resumen = this.conResumen(nuevo, 'ninguno');
-      const { nombre } = datosDe(pendiente).cliente;
       return {
         ...resumen,
         texto: `📝 Tenías un borrador sin aprobar del ${fechaCorta(pendiente.actualizadoEn)}${nombre ? ` (${nombre})` : ''}. Lo dejé cancelado y empecé uno nuevo con tu mensaje.\n\n${resumen.texto}`,
