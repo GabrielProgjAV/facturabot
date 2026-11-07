@@ -13,6 +13,7 @@ import {
   parsePesos,
   resumenBorrador,
   sumaNoCuadra,
+  sumaParcialSupera,
   totalBase,
   valoresCambiadosSinPedir,
   valoresDelMensaje,
@@ -106,6 +107,46 @@ describe('sumaNoCuadra', () => {
 
   it('no compara si falta el total escrito', () => {
     expect(sumaNoCuadra({ ...completo, totalEscrito: null })).toBe(false);
+  });
+});
+
+describe('sumaParcialSupera (ítems sin valor y los demás ya pasan el total)', () => {
+  // Negra 78.000 y azul 45.000 con valor, amarilla sin valor: suman 123.000.
+  const conUnoSinValor = (totalEscrito: number | null): BorradorFactura => ({
+    ...completo,
+    items: completo.items.map((item, i) =>
+      i === 2 ? { ...item, valor: null } : item,
+    ),
+    totalEscrito,
+  });
+
+  it.each([
+    [123001, false], // aún cabe la amarilla (1 peso)
+    [123000, false], // igual: no se marca (la amarilla quedaría en 0)
+    [122999, true],
+    [100000, true],
+  ])('total %i → %s', (total, esperado) => {
+    expect(sumaParcialSupera(conUnoSinValor(total))).toBe(esperado);
+  });
+
+  it('sin total escrito o con todos los valores, no aplica', () => {
+    expect(sumaParcialSupera(conUnoSinValor(null))).toBe(false);
+    expect(sumaParcialSupera({ ...completo, totalEscrito: 1 })).toBe(false);
+  });
+
+  it('no es aprobable y el resumen lo advierte', () => {
+    const borrador = conUnoSinValor(100000);
+
+    expect(motivoNoAprobable(borrador)).toBe(
+      'Los productos con valor ya suman más que el total escrito. Corrígelo antes de aprobar.',
+    );
+    expect(resumenBorrador(borrador)).toContain(
+      '⚠️ Los productos con valor ya suman más que el total escrito.',
+    );
+  });
+
+  it('con el total suficiente, sí es aprobable (modo simple: va el total)', () => {
+    expect(motivoNoAprobable(conUnoSinValor(141000))).toBeNull();
   });
 });
 

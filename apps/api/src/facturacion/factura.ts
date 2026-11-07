@@ -126,6 +126,17 @@ export function sumaNoCuadra(borrador: BorradorFactura): boolean {
 }
 
 /**
+ * true si hay total escrito, algún ítem sin valor, y los que sí tienen valor ya suman más que el
+ * total: ningún valor de los que faltan puede cuadrarlo (no hay valores negativos).
+ */
+export function sumaParcialSupera(borrador: BorradorFactura): boolean {
+  const valores = borrador.items.map((item) => item.valor);
+  if (borrador.totalEscrito === null || !valores.includes(null)) return false;
+  const suma = valores.reduce<number>((total, v) => total + (v ?? 0), 0);
+  return suma > borrador.totalEscrito;
+}
+
+/**
  * La identificación del cliente analizada (forma y DV), o null si no hay. Se guarda tal como la
  * escribió el usuario y se analiza al mostrarla o aprobarla: el código decide, nunca la IA.
  */
@@ -466,6 +477,8 @@ export function motivoNoAprobable(borrador: BorradorFactura): string | null {
   if (problema) return problema;
   if (sumaNoCuadra(borrador))
     return 'Los productos no suman el total escrito. Corrígelo antes de aprobar.';
+  if (sumaParcialSupera(borrador))
+    return 'Los productos con valor ya suman más que el total escrito. Corrígelo antes de aprobar.';
   return null;
 }
 
@@ -515,6 +528,11 @@ export function resumenBorrador(
   if (sumaNoCuadra(borrador)) {
     lineas.push(
       '⚠️ Los productos no suman el total escrito. Revisa los valores o escribe "el total es …".',
+    );
+  }
+  if (sumaParcialSupera(borrador)) {
+    lineas.push(
+      '⚠️ Los productos con valor ya suman más que el total escrito. Revisa los valores o escribe "el total es …".',
     );
   }
 
