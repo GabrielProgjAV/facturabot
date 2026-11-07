@@ -133,7 +133,8 @@ propia queda para cuando la pidan Siigo o el panel (fase 7).
 
 ## 8. Pendientes de CLAUDE.md que entran en esta fase
 
-Antes de la primera factura real, porque cambian lo que llega a la DIAN: cédula de menos de 4 dígitos
+**Hecho el 2026-11-06 (paso 3, PR #9)**; los nombres de negocio sin tipo de sociedad solo advierten,
+porque una persona natural comerciante factura con su cédula. Antes de la primera factura real, porque cambian lo que llega a la DIAN: cédula de menos de 4 dígitos
 no aprobable; Zod sobre el JSON de `datos` leído de la BD (la emisión lo lee); identificación o total
 que cambian en una corrección deben aparecer en el mensaje; "quitamanchas" no cuenta como "quita";
 suma parcial mayor que el total con ítems sin valor; ítem reemplazado (caso f); nombres de empresa sin
@@ -202,9 +203,11 @@ D3 sí, token de la cuenta de prueba en `.env`; el de producción, solo tras la 
 de Alegra, sin tabla propia (§7). D5 todo en el PC de Gabriel (§9). D6 consumidor final por defecto,
 visible en el resumen, y las primeras facturas reales solo a consumidor final. D7 emisión en dos
 tiempos, con el borrador de Alegra creado solo dentro del trabajo de emisión (§4).
+**De Gabriel (2026-11-06, tras la revisión de seguridad del PR #8):** sí a los ajustes del §4; D8
+estado `NO_CREADA`; D9 `Emision` guarda la `date` enviada, el modo y la cuenta de Alegra; D10 repetir
+el stamp hasta 3 veces con espera.
 **Las decide el agente y las reporta:** nombres de módulos y variables, textos al usuario, intervalos de
-consulta del estado DIAN, número de repeticiones del stamp, formato de `observations`, envío del PDF
-por Telegram.
+consulta del estado DIAN, formato de `observations`, envío del PDF por Telegram.
 
 **Riesgos:** duplicado solo si falla la creación del borrador por timeout (mitigado con la
 reconciliación del §4; el timbrado repetido no duplica); huecos de numeración por borradores que no

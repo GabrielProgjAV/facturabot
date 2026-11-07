@@ -96,7 +96,8 @@ const casos: Caso[] = [
       const vinilo = item(b, /vinilo/i);
       if (vinilo) expect(vinilo.valor).toBeNull();
     },
-    // 2026-10-15 y línea base: qwen2.5:7b reemplaza el estuco.
+    // 2026-10-15 y línea base: qwen2.5:7b reemplaza el estuco. Desde el PR #9 el código lo
+    // detecta (`itemsReemplazadosSinPedir`): la corrección no se guarda y se pregunta.
     fallaEnLineaBase: true,
   },
   {

@@ -136,9 +136,12 @@ Ollama debe estar corriendo con el modelo oficial descargado.
 ## Estado y plan
 
 - ✅ Fases 0–3: validación, base, bot eco en Telegram y factura por texto (tags `v0.1.0`–`v0.3.0`).
-- ✅ Fase 4 voz (`feat/fase-4-voz`, PR #3 listo para revisión, auditoría externa hecha; tag `v0.4.0` tras integrarlo): 4.1 Whisper,
+- ✅ Fase 4 voz (PR #3 integrado, tag `v0.4.0`): 4.1 Whisper,
   4.2 transcripción, 4.3 cola BullMQ, 4.4 voz → borradores con aprobación solo con botón. Alcance y
   pendientes en §0 de `docs/planes/fase-4.4-voz-borradores.md`; bitácora en `README.es.md`.
+- **Fase 5 Alegra, en curso** (plan aprobado: `docs/planes/fase-5-alegra.md`, emisión en dos
+  tiempos). Hechos: paso 1 (reporte, PR #6), paso 2 (script exploratorio, PR #8) y paso 3
+  (pendientes del §8, PR #9). Sigue el paso 4: esquema `Emision` y migración.
 - **Auditoría externa independiente** (`docs/prompts/auditoria-seguridad.md`), obligatoria en dos
   momentos: (1) antes de integrar el PR #3 de la fase 4 (hecha el 2026-11-04: recomienda integrar, sin bloqueantes) y (2) **antes de usar
   el token de producción de Alegra** (no antes de empezar la fase 6: se puede desarrollar contra la
@@ -146,16 +149,16 @@ Ollama debe estar corriendo con el modelo oficial descargado.
 - **Obligatorio antes de emitir la primera factura real (Alegra)**: los 5 hallazgos medios de la
   auditoría del PR #3 (`docs/auditorias/2026-11-04-pr3.md`) están corregidos en el PR #5
   (`fix/validacion-datos`, integrado en `main`). Queda como límite conocido: un NIT de 8 dígitos sin DV y con nombre de
-  persona pasa como cédula (solo una consulta al RUT lo detectaría). Pendientes de su revisión de
-  seguridad, antes de Alegra: exigir que una identificación o un total que cambian en una corrección
-  aparezcan en el mensaje; "quitamanchas" cuenta como "quita"; nombres de empresa sin tipo de
-  sociedad; y una cédula de menos de 4 dígitos no es aprobable (decidido por Gabriel el 2026-11-04,
-  reversible; se implementa en la fase de Alegra).
-- **Antes de Alegra** (no obligatorio para la primera prueba): suma parcial mayor que el total con
-  ítems sin valor; advertencia de voz también para valores y total; Zod en la respuesta de Whisper;
-  "sí" sobre un borrador quieto sin aviso de fecha; el aviso "no lo reenvíes" junto al "⏳ Sigo
-  procesando…"; validar con Zod el JSON de `datos` leído de la BD; detectar un ítem reemplazado (caso f
-  del set de evaluación); PR aparte: `OLLAMA_MODELO_TEXTO` por defecto a `qwen2.5:7b`; test e2e.
+  persona pasa como cédula (solo una consulta al RUT lo detectaría); con un nombre de negocio sin
+  tipo de sociedad ("Ferretería …") el resumen lo advierte, sin bloquear. Los pendientes de su
+  revisión de seguridad y los del §8 del plan de la fase 5 están hechos en el PR #9: identificación
+  o total que cambian en una corrección deben estar en el mensaje; "quitamanchas" no cuenta como
+  "quita"; cédula de menos de 4 dígitos no aprobable; Zod sobre el JSON de `datos` leído de la BD;
+  suma parcial mayor que el total; ítem reemplazado (caso f).
+- **Antes de Alegra** (no obligatorio para la primera prueba): advertencia de voz también para
+  valores y total; Zod en la respuesta de Whisper; el aviso "no lo reenvíes" junto al "⏳ Sigo
+  procesando…"; PR aparte: `OLLAMA_MODELO_TEXTO` por defecto a `qwen2.5:7b`. En vez del test e2e,
+  un test de integración de la emisión con un proveedor falso (plan de la fase 5, §8).
 - **Antes de más usuarios:** `app.listen` en `127.0.0.1`; límite de respuestas a no autorizados; un PR
   aparte para actualizar `prisma` y `@nestjs/platform-express`; bloquear la aprobación si la
   identificación vino de voz (hoy solo advierte); preguntar con botones ante un borrador quieto;
