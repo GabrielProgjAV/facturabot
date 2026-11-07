@@ -12,7 +12,7 @@ import type { BorradorFactura } from './factura.js';
 import type { InterpreteTextoService } from './interprete-texto.service.js';
 
 const borrador: BorradorFactura = {
-  cliente: { nombre: 'Ana', identificacion: '123' }, // cédula ficticia
+  cliente: { nombre: 'Ana', identificacion: '12345678' }, // cédula ficticia
   items: [{ descripcion: 'vinilo', valor: 50000 }],
   totalEscrito: null,
 };
@@ -116,10 +116,10 @@ describe('ConversacionService', () => {
     it('con borrador pendiente, lo corrige y sube la versión', async () => {
       const { servicio, prisma, interprete } = crear(fila({ datos: sinNit }));
 
-      const respuesta = await servicio.responder(42, 'el nit es 123');
+      const respuesta = await servicio.responder(42, 'el nit es 12345678');
 
       expect(interprete.interpretar).toHaveBeenCalledWith(
-        'el nit es 123',
+        'el nit es 12345678',
         sinNit,
       );
       expect(prisma.borrador.update).toHaveBeenCalledWith({
@@ -183,7 +183,7 @@ describe('ConversacionService', () => {
       const { servicio, prisma, interprete } = crear(fila({ datos: dos }));
       interprete.interpretar.mockResolvedValueOnce(borrador); // la IA "olvidó" la brocha
 
-      const respuesta = await servicio.responder(42, 'el nit es 123');
+      const respuesta = await servicio.responder(42, 'el nit es 12345678');
 
       expect(prisma.borrador.update).not.toHaveBeenCalled();
       expect(respuesta.texto).toMatch(
@@ -229,11 +229,11 @@ describe('ConversacionService', () => {
       const { servicio, prisma, interprete } = crear(fila());
       interprete.interpretar.mockResolvedValueOnce({
         ...borrador,
-        cliente: { nombre: 'Ana', identificacion: '124' }, // cédula ficticia
+        cliente: { nombre: 'Ana', identificacion: '12345679' }, // cédula ficticia
         items: [{ descripcion: 'vinilo', valor: 55000 }], // la IA cambió el vinilo
       });
 
-      const respuesta = await servicio.responder(42, 'el nit es 124');
+      const respuesta = await servicio.responder(42, 'el nit es 12345679');
 
       expect(prisma.borrador.update).not.toHaveBeenCalled();
       expect(respuesta.texto).toMatch(

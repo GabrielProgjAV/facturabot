@@ -491,7 +491,7 @@ describe('valoresCambiadosSinPedir (hallazgo 5: un valor no mencionado no cambia
 
   it('un ítem conservado que cambia a un valor que el mensaje no dice: se reporta', () => {
     expect(
-      valoresCambiadosSinPedir(completo, conAzul(50000), 'el nit es 123'),
+      valoresCambiadosSinPedir(completo, conAzul(50000), 'el nit es 12345678'),
     ).toEqual([
       {
         descripcion: '1/2 laca azul',
