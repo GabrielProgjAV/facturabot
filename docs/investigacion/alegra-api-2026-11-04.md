@@ -17,6 +17,52 @@ Fuentes leídas:
 Lo que sigue sin confirmar queda en 🔴. Por cada dato indico dónde lo leí, y las URLs completas están
 al final.
 
+## Actualización del 2026-11-06: JWT y exploración con la cuenta de prueba
+
+Hecha con `apps/api/scripts/explorar-alegra.ts` contra una **cuenta de prueba no habilitada ante la
+DIAN**, creando solo borradores: el script solo usa GET y POST, rechaza `stamp` y `void`, y se detiene
+si la cuenta tiene numeración electrónica. Las respuestas crudas
+se guardaron fuera del repo y se borraron al terminar. Datos de prueba: ficticios. **Límite general:**
+como la cuenta no está habilitada y nada se timbró, nada de esto confirma cómo se comporta una cuenta
+real al timbrar.
+
+**Autenticación con JWT**
+
+- 🟢 Alegra ahora recomienda un **JWT** generado en Integraciones. Va en `Authorization: Bearer <JWT>`.
+  La página de autenticación de la API de facturas solo documenta Basic; Bearer aparece documentado en
+  otras APIs de Alegra (Nómina, servidor MCP). Probado: `api.alegra.com/api/v1` lo acepta (200).
+- 🟢 El JWT **vence**: el de la cuenta de prueba, 16 días después de creado. Trae dentro datos del
+  usuario (correo y nombre) y un campo `api_key`: hay que tratarlo entero como secreto. Solo se leyó
+  el nombre de los campos y `exp`.
+- 🔴 No se sabe si hay JWT de vencimiento más largo ni si el token clásico (Basic) sigue vigente.
+
+**Lo probado y lo leído**
+
+| Pregunta | Resultado | Fuente |
+|---|---|---|
+| ¿Se puede timbrar un borrador ya creado? | 🟢 Sí: `POST /invoices/stamp` con `{"ids": [...]}` timbra hasta 10 facturas en borrador o abiertas. Responde 200 si al menos una salió, con un resultado por id (`success` o `code` + `message`). El código **3226** significa «ya está emitida». | Documentación oficial; **no probado** (no se envía `stamp`) |
+| Largo máximo de `description` | 🟡 Un borrador aceptó y devolvió **20.000 caracteres** sin recortar; el esquema no declara máximo. 🔴 No se sabe el límite al timbrar. | Prueba |
+| ¿`observations` vuelve y sirve para buscar? | 🟢 Vuelve en el listado y en el detalle. 🔴 Los filtros `observations=` y `query=` **se ignoran** (devolvieron todas las facturas del día, incluida una de control con otra referencia). 🟢 `client_identification` + `date` **sí filtra**. | Prueba con factura de control |
+| ¿Un borrador consume consecutivo? | 🟡 En la cuenta de prueba **sí**: cada borrador tomó el siguiente número. Pero esa numeración **no es electrónica** (`isElectronic: false`, sin prefijo); con la numeración DIAN puede ser distinto. | Prueba (limitada) |
+| ¿«Consumidor final» sirve en `POST /invoices`? | 🟢 Sí para un borrador. El contacto ya existe en la cuenta: tipo `CC`, número 222222222222 (identificador genérico de la DIAN, no es de ninguna persona), `PERSON_ENTITY`, `SIMPLIFIED_REGIME`, sin dirección. 🔴 No verificado al timbrar. | Prueba |
+
+**Otros hallazgos**
+
+- Sin `status` y sin pagos, `POST /invoices` crea la factura en **borrador** (`draft`).
+- Un borrador no trae ningún campo de CUFE, `stamp` ni `emission_status`: el nombre del campo del CUFE
+  sigue 🔴.
+- `GET /invoices/{id}?fields=pdf` responde **500** sobre un borrador; con `xml` o `events` responde 200
+  pero sin esos datos.
+- Un contacto con solo nombre, tipo `CC` y número (sin régimen ni dirección) fue aceptado. Como la
+  cuenta no está habilitada ante la DIAN, esto **no** resuelve el choque con la Res. 202.
+- `POST /contacts` responde **200**, no 201. Los ids siguen siendo números en texto, no UUID.
+- Ninguna llamada respondió 403.
+
+**Consecuencia para el diseño:** emisión en dos tiempos (borrador → `POST /invoices/stamp`), aprobada
+por Gabriel el 2026-11-06 y descrita en el §4 del plan de la fase 5. Repetir el timbrado del mismo id
+no duplica; el riesgo de duplicado queda solo en la creación del borrador, que se reconcilia con
+`client_identification` + `date` comparando `observations` de nuestro lado.
+
 ## Tus 5 prioridades
 
 ### 1. Sandbox o cuenta de prueba que no emita ante la DIAN
@@ -174,6 +220,8 @@ versión vigente de los artículos 69 y 70.
 
 ### Autenticación
 
+- Actualizado el 2026-11-06: el token recomendado ahora es un JWT con `Bearer` (ver la actualización
+  al inicio).
 - 🟢 Basic con `correo:token` en base64. El token se genera en Configuración → «API - Integraciones
   con otros sistemas», dentro de la app. Si falla, devuelve 401 (autenticación).
 - 🟢 El token es «otorgado al usuario registrado» y el límite de peticiones es por usuario.

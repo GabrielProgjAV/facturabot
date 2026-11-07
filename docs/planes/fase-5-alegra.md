@@ -1,7 +1,8 @@
 # Plan de la fase 5: factura electrónica con Alegra
 
 Estado: **aprobado por Gabriel el 2026-11-06, con ajustes** (estado PENDIENTE en `Emision`, primeras
-facturas reales solo a consumidor final, pregunta del plan respondida y decisiones del §12).
+facturas reales solo a consumidor final, pregunta del plan respondida y decisiones del §12). El mismo
+día, tras el script exploratorio, aprobó la **emisión en dos tiempos** (§4).
 Fuentes: `docs/investigacion/alegra-api-2026-11-04.md` (el reporte; 🔴 = sin confirmar), CLAUDE.md y
 los ajustes del 2026-10-28 de `docs/prompts/pivote-formalizacion.md` (fase 5 = Alegra, fase 6 = libro
 de movimientos; el "Estado y plan" de CLAUDE.md todavía dice "6 Alegra" y se corrige al cerrar). Datos
@@ -20,45 +21,83 @@ número, CUFE y PDF. En desarrollo solo se crean **borradores** en la cuenta de 
 - La emisión real queda detrás de `ALEGRA_EMITIR` (Zod, `false` por defecto). Con `false` el
   adaptador nunca envía `stamp`, aunque el borrador esté aprobado. Al arrancar, el log dice en qué modo
   está (sin el token ni el correo).
-- Credenciales solo en `.env`: `ALEGRA_USUARIO` y `ALEGRA_TOKEN`. La cuenta real de la tienda y su token
+- Credenciales solo en `.env`: **`ALEGRA_TOKEN`**, un JWT de Integraciones que va en
+  `Authorization: Bearer` (probado el 2026-11-06 contra `api.alegra.com/api/v1`; no hace falta
+  `ALEGRA_USUARIO`). El JWT **vence** (el de prueba, a los 16 días) y trae dentro datos del usuario y
+  una `api_key`: se trata entero como secreto y nunca se decodifica en los logs.
+- **Vencimiento:** al arrancar, el código lee solo el campo `exp` del token (sin imprimir nada más).
+  Si faltan menos de 5 días, el log lo avisa y el bot se lo dice al usuario autorizado una vez al día;
+  si ya venció, la emisión queda apagada con un aviso claro (los borradores siguen funcionando). Un
+  401 de Alegra se trata como NO_CREADA "token vencido o revocado".
+- La cuenta real de la tienda y su token
   **no se usan** hasta pasar la auditoría externa (2) de CLAUDE.md. Ningún test ni CI llama a Alegra.
+- **Requisito antes de la primera factura real:** el token de la cuenta real se crea con **permisos
+  mínimos**: facturas, contactos, ítems, impuestos y numeraciones. Sin eliminar, anular, bancos ni POS.
 
-## 3. Script exploratorio (1 o 2 días, cuenta de prueba)
+## 3. Script exploratorio (hecho el 2026-11-06, cuenta de prueba)
+
+Resultado en la "Actualización del 2026-11-06" del reporte; el script es `apps/api/scripts/explorar-alegra.ts`. Lo que pedía:
 
 Un script manual (fuera de CI, con `fetch` de Node 24: sin dependencias nuevas) que, en orden:
 `GET /taxes` (id del IVA 19 %), `GET /number-templates`, crear el ítem "Pinturas varias", buscar el
 contacto "Consumidor final", crear un contacto ficticio, `POST /invoices` **sin stamp** con
 descripción propia, `paymentForm` y `paymentMethod`, y `GET /invoices/{id}?fields=pdf,xml,events`.
 Prueba además el largo máximo de `description`, el filtro `client_identification + date`, si
-`observations` vuelve en el listado, y si existe una forma de **timbrar un borrador ya creado** (si
-existe, cambia el diseño del §4 a dos tiempos y casi elimina el riesgo de duplicado). Las respuestas
+`observations` vuelve en el listado, y si existe una forma de **timbrar un borrador ya creado**
+(existe: por eso el §4 es en dos tiempos). Las respuestas
 se guardan fuera del repo; lo aprendido se agrega al reporte. **Límite:** sin timbrar no se verán el
 CUFE ni los estados DIAN; esos nombres quedan para soporte (§10).
 
-## 4. Tabla `Emision` e idempotencia
+## 4. Tabla `Emision` e idempotencia: emisión en dos tiempos
 
-Campos: `borradorId` **único** (un borrador, una emisión), `proveedor`, `estado`, `idExterno` (texto:
-los ids de Alegra pasan a UUID), `numero`, `cufe`, `estadoDian` (PENDIENTE / ACEPTADA / RECHAZADA,
-nuestro, no el de Alegra), `codigoError` (sin texto con datos personales) y fechas.
-Estados: `PENDIENTE` → `ENVIANDO` → `CREADA_SIN_EMITIR` (modo desarrollo) | `EMITIDA` |
-`RECHAZADA` | `NO_CREADA` | `DESCONOCIDO`.
+Diseño aprobado por Gabriel el 2026-11-06: **(1)** `POST /invoices` **sin** `stamp` (crea un
+borrador en Alegra) → se guarda su id → **(2)** `POST /invoices/stamp` con `{"ids": [ese id]}`.
+Repetir el paso 2 sobre el mismo id no duplica: Alegra responde el código **3226** ("ya está
+emitida"). El riesgo de duplicado queda solo en el paso 1.
 
-- **Bandeja de salida (*transactional outbox*):** en **una transacción**, el borrador pasa a APROBADO
-  y `Emision` nace en PENDIENTE. Después se encola el trabajo `emitir` (BullMQ, `attempts: 1`: nunca
-  reintento automático). El worker la pasa a ENVIANDO **justo antes** de la llamada HTTP, con
-  `observations = "facturabot:<emisionId>"`.
-- **Al arrancar:** toda PENDIENTE se reencola (nunca tocó Alegra, así que es seguro); solo ENVIANDO
-  pasa a DESCONOCIDO.
-- **201** → se guarda `idExterno` de inmediato; luego se consulta el estado DIAN con trabajos
-  diferidos (por ejemplo a 1, 5 y 30 min) y se avisa al usuario.
-- **400 con factura creada** (el timbrado falló): RECHAZADA **con** `idExterno`. Ese borrador ya
-  existe en Alegra: nunca otro POST; el humano lo resuelve en la web de Alegra.
-- **400 sin factura, 401, 402, 403, 429**: NO_CREADA. Se informa; reintentar es una acción explícita
-  del usuario.
-- **Timeout, error de red, 500, 503 o caída del proceso con la emisión en ENVIANDO**: se
-  **reconcilia una vez** listando por `client_identification + date` y buscando
-  nuestro id en `observations` (comparación exacta de nuestro lado). Si aparece, se adopta. Si no,
-  queda DESCONOCIDO y se le pide al humano revisar Alegra antes de cualquier reintento.
+Campos: `borradorId` **único** (un borrador, una emisión), `proveedor`, `estado`, `idExterno`
+(texto), `numero`, `cufe`, `estadoDian` (PENDIENTE / ACEPTADA / RECHAZADA, nuestro, no el de
+Alegra), `codigoError` (sin texto con datos personales) y fechas.
+Estados: `PENDIENTE` → `CREANDO_BORRADOR` → `BORRADOR_CREADO` (con `idExterno`) → `TIMBRANDO` →
+`EMITIDA` | `RECHAZADA`, más `DESCONOCIDO` (solo timeout al crear el borrador) y `NO_CREADA` (error
+definitivo al crearlo).
+
+- **El borrador en Alegra se crea solo dentro del trabajo de emisión**, justo antes de timbrar;
+  nunca mientras el borrador del bot está en corrección. Así cada borrador de Alegra se timbra
+  enseguida y se minimizan los huecos de numeración.
+- **Bandeja de salida (*transactional outbox*):** en **una transacción**, el borrador del bot pasa a
+  APROBADO y `Emision` nace en PENDIENTE, con la `date` que se enviará, el modo (`ALEGRA_EMITIR`) y
+  la cuenta de Alegra. Después se encola `emitir` (BullMQ, `jobId = emitir-<emisionId>`,
+  `attempts: 1`, `maxStalledCount: 0`, `concurrency: 1`).
+- **Paso a CREANDO_BORRADOR atómico y guardado antes del POST:** `UPDATE … WHERE estado =
+  'PENDIENTE'`; si no cambia ninguna fila, el trabajo se aborta. `observations =
+  "facturabot:<emisionId>"`. Al arrancar, un candado de una sola instancia (`pg_try_advisory_lock`)
+  impide que dos copias del bot recuperen o emitan a la vez.
+- **Paso 1, cualquier 2xx con id válido (Zod), o 400 que trae la factura creada** → BORRADOR_CREADO y
+  se guarda `idExterno` de inmediato. Con `ALEGRA_EMITIR` apagada (desarrollo), la emisión **termina
+  aquí** y esa fila nunca se timbra, aunque después se encienda la bandera o cambie el token.
+- **Paso 1, 400 sin factura, 401, 402, 403 o 429** → NO_CREADA; se informa y reintentar es una acción
+  explícita del usuario.
+- **Paso 1, timeout, error de red, 5xx, otro código o 2xx que no pasa Zod** → DESCONOCIDO, y se
+  **reconcilia** a 1 y 5 min: se lista por `client_identification` + la `date` guardada, recorriendo
+  todas las páginas, y se compara `observations` de nuestro lado (el filtro de Alegra por
+  `observations` no funciona). Si aparece → BORRADOR_CREADO con ese id; si no, el humano revisa
+  Alegra. El reintento manual vuelve a reconciliar y pide confirmar con botón. **Nunca** se repite el
+  paso 1 automáticamente.
+- **Antes de cada paso 2:** `GET /invoices/{id}` y se exige `observations == facturabot:<emisionId>`
+  (y misma cuenta y modo). Si no coincide → DESCONOCIDO y aviso: nunca se timbra una factura que no
+  creamos.
+- **Paso 2:** TIMBRANDO → resultado validado con Zod **para nuestro id** → `success` → EMITIDA; luego
+  se consulta el estado DIAN con trabajos diferidos (por ejemplo a 1, 5 y 30 min) y se avisa al
+  usuario. Error de validación de esa factura → RECHAZADA **con** `idExterno` (el humano la resuelve
+  en la web de Alegra; nunca otro paso 1).
+- **Paso 2, timeout, red o 5xx** → se **repite el stamp del mismo id** (hasta 3 veces, con espera).
+  **3226** = ya estaba emitida → se consulta y queda EMITIDA. Si los intentos se acaban (o hay 401),
+  queda en TIMBRANDO con aviso y se reintenta al arrancar.
+- **Al arrancar** (con el candado): PENDIENTE se reencola, salvo si lleva más de 2 h, que se pregunta
+  con botones "Emitir / Ya la facturé a mano" (plan B del §9; una PENDIENTE se puede cancelar);
+  CREANDO_BORRADOR pasa a DESCONOCIDO y se reconcilia; BORRADOR_CREADO (solo modo real) y TIMBRANDO
+  repiten el paso 2; EMITIDA con estado DIAN pendiente y RECHAZADA se vuelven a consultar.
 
 ## 5. Puerto `ProveedorFacturacion` y adaptador de Alegra
 
@@ -114,7 +153,9 @@ un proveedor falso (201, 400 con y sin factura, timeout, reinicio).
 - **Requisitos del PC antes de la primera factura real:** respaldo diario **cifrado** de PostgreSQL
   guardado fuera del PC; suspensión desactivada mientras el bot esté en uso (hoy, las sesiones de
   prueba; si algún día corre en horario de tienda, ese horario); sesión del sistema operativo con
-  clave, y disco cifrado si el equipo lo permite.
+  clave, y disco cifrado si el equipo lo permite. Y un **procedimiento de restauración**: con los
+  workers apagados, comparar las facturas de Alegra con `observations` `facturabot:` desde la fecha
+  del respaldo contra `Emision`, y corregir antes de arrancar (si no, se reemitiría lo ya emitido).
 - **Plan B ante una caída:** facturar a mano en la web de Alegra, como hoy. Al volver, el borrador de
   esa venta se cancela en el bot para no emitirla dos veces.
 
@@ -122,16 +163,21 @@ un proveedor falso (201, 400 con y sin factura, timeout, reinicio).
 
 1. ¿Hay ambiente de pruebas por API? ¿Qué pasa con `generateStamp` en una cuenta no habilitada o en
    la prueba de 15 días?
-2. ¿Hay clave de idempotencia o referencia buscable? ¿Se puede timbrar un borrador ya creado? ¿Cómo
-   evitan duplicados tras un 400?
+2. ¿Hay clave de idempotencia o referencia buscable? (El filtro por `observations` se ignora.)
+   ¿`POST /invoices/stamp` sobre un borrador se comporta igual en una cuenta habilitada?
 3. ¿Cómo se llama el campo del CUFE? ¿Hay webhook de aceptación o rechazo de la DIAN y cuánto tarda?
-4. ¿Largo máximo de `description` por línea? ¿Un borrador consume consecutivo?
+4. ¿Largo máximo de `description` por línea **al timbrar**? (Un borrador acepta 20.000 caracteres.)
 5. Res. 202: ¿qué enviar en `regime`, `kindOfPerson` y dirección cuando no se pueden pedir? ¿Es
    obligatorio el `dv`? ¿Cómo separar nombre y apellidos?
-6. ¿El contacto "Consumidor final" sirve en `POST /invoices` por API?
-7. ¿Integran la consulta de adquirentes de la DIAN, y por API?
-8. ¿Se anula por API una factura emitida o solo con nota crédito? ¿Cómo se revoca el token?
-9. (Para la fase 12, no urge) ¿Qué autorización exige un servicio multiempresa sobre la API?
+6. ¿El contacto "Consumidor final" sirve al **timbrar** por API? (Para un borrador sí sirve.)
+7. ¿Un borrador que nunca se timbra deja un hueco en la numeración electrónica de la DIAN, y eso es
+   un problema? ¿Cómo se anula o descarta ese borrador? (En la cuenta de prueba, con numeración no
+   electrónica, cada borrador consumió un número.)
+8. ¿Integran la consulta de adquirentes de la DIAN, y por API?
+9. ¿Se anula por API una factura emitida o solo con nota crédito? ¿Cómo se revoca el token? ¿Se puede
+   emitir un JWT de Integraciones con vencimiento más largo, o el token clásico (Basic) sigue
+   vigente y sin vencimiento? (La página de autenticación de la API solo documenta Basic.)
+10. (Para la fase 12, no urge) ¿Qué autorización exige un servicio multiempresa sobre la API?
 
 Ya respondida (2026-11-06): la tienda tiene el plan **Contabilidad Emprendedor**, que según la tabla
 de precios incluye la API. Si aun así Alegra responde 402, se pregunta a soporte.
@@ -144,19 +190,24 @@ reconciliación, recuperación al arrancar y test de integración. 7. Consumidor
 identificado. 8. Mensajes al usuario. 9. Procedimiento de nota crédito. 10. Prueba manual en la cuenta
 de prueba y cierre (bitácora, READMEs, CLAUDE.md, tag `v0.5.0`). La primera factura real queda
 **fuera** de la fase: necesita la auditoría (2), las respuestas de soporte que la afectan, los
-requisitos del PC (§9) y el OK explícito de Gabriel; y será a consumidor final (§6).
+requisitos del PC (§9), el token real con permisos mínimos (§2) y el OK explícito de Gabriel; y será
+a consumidor final (§6).
 
 ## 12. Decisiones
 
 **De Gabriel (2026-11-06):** D1 sí, campos y estados de `Emision` con PENDIENTE (§4). D2 sí,
-`ALEGRA_EMITIR` apagada por defecto y sin reintento automático (DESCONOCIDO lo resuelve un humano).
+`ALEGRA_EMITIR` apagada por defecto y sin reintento automático de la creación del borrador
+(DESCONOCIDO lo resuelve un humano; repetir el stamp del mismo id sí es automático, porque no duplica).
 D3 sí, token de la cuenta de prueba en `.env`; el de producción, solo tras la auditoría. D4 contactos
 de Alegra, sin tabla propia (§7). D5 todo en el PC de Gabriel (§9). D6 consumidor final por defecto,
-visible en el resumen, y las primeras facturas reales solo a consumidor final.
+visible en el resumen, y las primeras facturas reales solo a consumidor final. D7 emisión en dos
+tiempos, con el borrador de Alegra creado solo dentro del trabajo de emisión (§4).
 **Las decide el agente y las reporta:** nombres de módulos y variables, textos al usuario, intervalos de
-consulta del estado DIAN, formato de `observations`, envío del PDF por Telegram.
+consulta del estado DIAN, número de repeticiones del stamp, formato de `observations`, envío del PDF
+por Telegram.
 
-**Riesgos:** duplicado por falta de idempotencia (mitigado con el §4; resuelto si existe el timbrado
-de un borrador); CUFE y estados sin confirmar hasta hablar con soporte; choque Res. 202 frente a los
+**Riesgos:** duplicado solo si falla la creación del borrador por timeout (mitigado con la
+reconciliación del §4; el timbrado repetido no duplica); huecos de numeración por borradores que no
+se timbran (pregunta 7); CUFE y estados sin confirmar hasta hablar con soporte; choque Res. 202 frente a los
 contactos de Alegra (mitigado: solo consumidor final al principio); un solo PC sin respaldo
 (mitigado con los requisitos del §9 y el plan B manual).
