@@ -411,7 +411,7 @@ describe('ConversacionService', () => {
 
       expect(prisma.borrador.update).not.toHaveBeenCalled();
       expect(respuesta.texto).toMatch(
-        /^⚠️ Con tu corrección, el total pasaba de \(ninguno\) a \$\s60\.000, y tu mensaje no dice ese valor\./,
+        /^⚠️ Con tu corrección, el total pasaba de \(ninguno\) a \$\s60\.000, y tu mensaje no dice ese valor después de "total"\./,
       );
     });
 

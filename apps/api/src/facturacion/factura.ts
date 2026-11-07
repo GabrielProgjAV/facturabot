@@ -57,7 +57,12 @@ export interface BorradorFactura {
 }
 
 /** Pesos enteros y no negativos: así los deja `parsePesos`. */
-const pesosSchema = z.number().int().nonnegative().nullable();
+const pesosSchema = z
+  .number()
+  .int()
+  .nonnegative()
+  .max(1_000_000_000_000)
+  .nullable();
 
 /**
  * Forma de `BorradorFactura` guardada en la BD (`Borrador.datos`). Se valida al leer: la emisión
@@ -107,14 +112,26 @@ export const TASA_IVA = 0.19;
  */
 export function parsePesos(valor: string | number | null): number | null {
   if (valor === null) return null;
-  if (typeof valor === 'number') return valor >= 0 ? valor : null;
+  if (typeof valor === 'number') return enRango(valor);
 
   let texto = valor.toLowerCase().replace(/\$|\s/g, '');
   const multiplicador = texto.endsWith('mil') ? 1000 : 1;
   texto = texto.replace(/mil$/, '').replace(/\./g, '').replace(',', '.');
   if (!/^\d+(\.\d+)?$/.test(texto)) return null;
 
-  return Math.round(Number(texto) * multiplicador);
+  return enRango(Math.round(Number(texto) * multiplicador));
+}
+
+/**
+ * Tope de un valor en pesos (un billón): más que eso es un error de lectura, y pasado el rango de
+ * enteros seguros la suma perdería precisión. Se devuelve null: el resumen muestra ❓ y se pregunta.
+ */
+export const MAXIMO_PESOS = 1_000_000_000_000;
+
+function enRango(valor: number): number | null {
+  return Number.isFinite(valor) && valor >= 0 && valor <= MAXIMO_PESOS
+    ? valor
+    : null;
 }
 
 /** Base gravable: el total escrito, o la suma de los ítems si todos tienen valor. */
@@ -213,11 +230,12 @@ export function conOrigenDeIdentificacion(
 
 /**
  * "quita", "elimina", "borra" y sus formas ("quítale", "elimínalo", "bórramelo", "quitamos"),
- * como palabra entera: no "borrador" ni "quitamanchas" (un producto). Tampoco una negación ("no
- * quites la brocha", "no le borres nada").
+ * como palabra entera (límites Unicode: "quitaría" no cuenta): no "borrador" ni "quitamanchas" (un
+ * producto). Tampoco con una negación hasta 3 palabras antes ("no quites la brocha", "no se la
+ * borres", "nunca quites", "no quiero que quites"); una coma corta la negación ("no, quita…").
  */
 const PIDE_QUITAR =
-  /(?<!\b(?:no|sin)\s+(?:(?:le|la|lo|les|las|los|me)\s+)?)\b(?:qu[ií]t|elim[ií]n|b[oó]rr)(?:a|e|o|ar|as|an|es|en|amos|emos|ando|ado|ada|ados|adas)(?:me|te|se|nos)?(?:le|la|lo|les|las|los)?\b/i;
+  /(?<!(?<![\p{L}\p{N}])(?:no|sin|nunca|tampoco)(?:\s+\p{L}+){0,3}\s+)(?<![\p{L}\p{N}])(?:qu[ií]t|elim[ií]n|b[oó]rr)(?:a|e|o|ar|as|an|es|en|amos|emos|ando|ado|ada|ados|adas)(?:me|te|se|nos)?(?:le|la|lo|les|las|los)?(?![\p{L}\p{N}])/iu;
 
 /** Palabras que no distinguen un producto de otro. */
 const PALABRAS_VACIAS = new Set([
@@ -320,8 +338,10 @@ export interface ItemsQuitados {
  * desaparece se pregunta, nunca se deja pasar en silencio). Para quitarlo, el mensaje tiene que
  * pedirlo ("quita", "elimina", "borra") y nombrar cada ítem que se va (hallazgo 4 de la auditoría
  * del PR #3): "quita la brocha" no permite que desaparezca también el vinilo.
- * Un ítem reemplazado por otro (caso f) lo detecta `itemsReemplazadosSinPedir`. Límite conocido:
- * no reconoce "saca" o "ya no va" como pedido de quitar (se pregunta de más).
+ * Un ítem reemplazado por otro (caso f) lo detecta `itemsReemplazadosSinPedir`. Límites
+ * conocidos: no reconoce "saca" o "ya no va" como pedido de quitar (se pregunta de más); y nombrar
+ * no es pedir: con "quita la brocha y el vinilo déjalo a 45 mil" el vinilo también puede irse,
+ * porque el código no relaciona cada ítem con el verbo.
  */
 export function itemsQuitadosSinPedir(
   antes: BorradorFactura,
@@ -419,48 +439,123 @@ export function valoresCambiadosSinPedir(
       nuevo: false,
     }));
   const valoresQueSeFueron = faltan.map((i) => i.valor);
-  const nuevos = sobran
-    .filter((d) => {
-      const i = valoresQueSeFueron.indexOf(d.valor);
-      if (i !== -1) {
-        valoresQueSeFueron.splice(i, 1);
-        return false;
-      }
-      return d.valor !== null && !enMensaje.has(d.valor);
-    })
-    .map((d) => ({
-      descripcion: d.descripcion,
-      antes: null,
-      despues: d.valor,
-      nuevo: true,
-    }));
+  const nuevos: ValorCambiado[] = [];
+  for (const d of sobran) {
+    const i = valoresQueSeFueron.indexOf(d.valor);
+    if (i !== -1) {
+      valoresQueSeFueron.splice(i, 1);
+      continue;
+    }
+    if (d.valor === null) {
+      // Un ítem reescrito sin valor, cuando a uno que se fue le quedaba un valor: lo perdió.
+      const perdido = valoresQueSeFueron.findIndex((v) => v !== null);
+      if (perdido === -1) continue;
+      const [antesValor] = valoresQueSeFueron.splice(perdido, 1);
+      nuevos.push({
+        descripcion: d.descripcion,
+        antes: antesValor,
+        despues: null,
+        nuevo: true,
+      });
+      continue;
+    }
+    if (!enMensaje.has(d.valor))
+      nuevos.push({
+        descripcion: d.descripcion,
+        antes: null,
+        despues: d.valor,
+        nuevo: true,
+      });
+  }
   return [...cambiados, ...nuevos];
 }
 
-/** La identificación o el total que una corrección cambió sin que el mensaje los diga. */
+/** El nombre, la identificación o el total que una corrección cambió sin que el mensaje los diga. */
 export type DatoCambiado =
-  | { campo: 'identificacion'; antes: string | null; despues: string | null }
+  | {
+      campo: 'nombre' | 'identificacion';
+      antes: string | null;
+      despues: string | null;
+    }
   | { campo: 'total'; antes: number | null; despues: number | null };
 
-/** Solo letras y dígitos, en mayúsculas: "900.123.456-8" y "9001234568" son lo mismo. */
+/** Solo letras y dígitos, en mayúsculas. */
 function soloAlfanumerico(texto: string): string {
   return normalizar(texto)
     .replace(/[^\p{L}\p{N}]/gu, '')
     .toUpperCase();
 }
 
-/** El mensaje pide quitar la identificación ("quita el NIT", "borra la cédula"). */
+/**
+ * Número y DV de una identificación, para comparar: "900.123.456-8" y "900123456-8" son la misma;
+ * "1234567-8" (NIT con DV) y "12345678" (otra cédula) no. Ejemplos ficticios.
+ */
+function claveIdentificacion(texto: string, extranjero: boolean): string {
+  const { numero, dv } = analizarIdentificacion(texto, extranjero);
+  return numero ? `${numero}-${dv ?? ''}` : '';
+}
+
+/**
+ * Cada número escrito del mensaje: letras y dígitos unidos por puntos o guiones ("900.123.456-8",
+ * "ab-123456"). Una coma o un espacio sin guion los separan: "1234567, 2 galones" son dos.
+ */
+function numerosEscritos(mensaje: string): string[] {
+  return [
+    ...mensaje.matchAll(
+      /[\p{L}\p{N}]+(?:\s*-\s*[\p{L}\p{N}]+|\.[\p{L}\p{N}]+)*/gu,
+    ),
+  ].map(([texto]) => texto);
+}
+
+/** El mensaje nombra la identificación ("el NIT", "la cédula", "la identificación"). */
 const NOMBRA_IDENTIFICACION =
   /\bn\.?\s?i\.?\s?t\b|c[eé]dula|\bc\.?\s?c\b|identificaci/i;
 
+/** El mensaje pide quitar el total: el verbo junto a "total" ("quita el total"). */
+const PIDE_QUITAR_TOTAL =
+  /(?<![\p{L}\p{N}])(?:qu[ií]t|elim[ií]n|b[oó]rr)\p{L}*\s+(?:(?:el|lo|del)\s+)*total(?![\p{L}\p{N}])/iu;
+
+/** El mensaje nombra el nombre del cliente ("quita el nombre"). */
+const NOMBRA_NOMBRE = /\bnombre\b/i;
+
+/** Tipos de sociedad: no hace falta repetirlos en el mensaje ("S.A.S." y "SAS"). */
+const PALABRAS_DE_SOCIEDAD = new Set(['sas', 'ltda', 'limitada', 'cia', 'bic']);
+
 /**
- * La identificación o el total que la corrección cambió sin que el mensaje los diga (pendiente
- * de la revisión de seguridad del PR #5). La IA devuelve el borrador completo y puede cambiar o
- * inventar un NIT o un total que nadie escribió; eso llegaría a la DIAN.
- * - Identificación nueva: sus letras y dígitos tienen que estar en el mensaje (sin puntos,
- *   espacios ni guiones). Perderla solo vale si el mensaje pide quitarla y la nombra.
- * - Total nuevo: tiene que estar entre los valores del mensaje ("80" cuenta como 80 mil).
- *   Perderlo solo vale si el mensaje pide quitarlo.
+ * Valores que siguen a la palabra "total": el primer número después de cada "total" ("el total es
+ * 150 mil"). Un número del mensaje que no es el total (una cantidad, el NIT) no cuenta.
+ */
+function totalesDelMensaje(mensaje: string): Set<number> {
+  const totales = new Set<number>();
+  for (const { index } of mensaje.matchAll(/\btotal\b/gi)) {
+    const resto = mensaje.slice(index + 'total'.length);
+    const primero = /\d[\d.,]*(?:\s*mil\b)?/i.exec(resto);
+    if (primero) for (const v of valoresDelMensaje(primero[0])) totales.add(v);
+  }
+  return totales;
+}
+
+/** true si el mensaje dice el nombre nuevo: todas sus palabras (salvo el tipo de sociedad). */
+function nombreDicho(nombre: string, mensaje: string): boolean {
+  const suyas = palabras(nombre).filter((p) => !PALABRAS_DE_SOCIEDAD.has(p));
+  if (suyas.length === 0) {
+    const clave = soloAlfanumerico(nombre);
+    return clave !== '' && soloAlfanumerico(mensaje).includes(clave);
+  }
+  const delMensaje = palabras(mensaje);
+  return suyas.every((p) => delMensaje.some((m) => mismaPalabra(m, p)));
+}
+
+/**
+ * El nombre, la identificación o el total que la corrección cambió sin que el mensaje los diga
+ * (pendiente de la revisión de seguridad del PR #5). La IA devuelve el borrador completo y puede
+ * cambiar o inventar un dato que nadie escribió; eso llegaría a la DIAN.
+ * - Nombre nuevo: todas sus palabras tienen que estar en el mensaje. Si solo cambian mayúsculas o
+ *   tildes, no es un cambio.
+ * - Identificación nueva: tiene que ser uno de los números escritos del mensaje, con el mismo
+ *   número y DV. Si solo cambia el formato, no es un cambio.
+ * - Total nuevo: tiene que ser el número que sigue a "total" ("80" cuenta como 80 mil).
+ * Perder un dato solo vale si el mensaje pide quitarlo y lo nombra ("quita el NIT").
  */
 export function datosCambiadosSinPedir(
   antes: BorradorFactura,
@@ -470,19 +565,42 @@ export function datosCambiadosSinPedir(
   const cambiados: DatoCambiado[] = [];
   const pideQuitar = PIDE_QUITAR.test(mensaje);
 
+  const nombreAntes = antes.cliente.nombre;
+  const nombreDespues = despues.cliente.nombre;
+  const mismoNombre =
+    nombreAntes !== null &&
+    nombreDespues !== null &&
+    normalizar(nombreAntes) === normalizar(nombreDespues);
+  if (nombreAntes !== nombreDespues && !mismoNombre) {
+    const dicho =
+      nombreDespues === null
+        ? pideQuitar && NOMBRA_NOMBRE.test(mensaje)
+        : nombreDicho(nombreDespues, mensaje);
+    if (!dicho)
+      cambiados.push({
+        campo: 'nombre',
+        antes: nombreAntes,
+        despues: nombreDespues,
+      });
+  }
+
   const idAntes = antes.cliente.identificacion;
   const idDespues = despues.cliente.identificacion;
-  // Solo cambió el formato ("900.123.456-8" → "900123456-8"): no es un cambio.
+  const extranjero = idDespues !== null && esDocumentoExtranjero(idDespues);
+  const clave =
+    idDespues === null ? '' : claveIdentificacion(idDespues, extranjero);
   const mismaId =
     idAntes !== null &&
-    idDespues !== null &&
-    soloAlfanumerico(idAntes) === soloAlfanumerico(idDespues);
+    clave !== '' &&
+    claveIdentificacion(idAntes, esDocumentoExtranjero(idAntes)) === clave;
   if (idAntes !== idDespues && !mismaId) {
-    const clave = idDespues === null ? '' : soloAlfanumerico(idDespues);
     const dicha =
       idDespues === null
         ? pideQuitar && NOMBRA_IDENTIFICACION.test(mensaje)
-        : clave !== '' && soloAlfanumerico(mensaje).includes(clave);
+        : clave !== '' &&
+          numerosEscritos(mensaje).some(
+            (n) => claveIdentificacion(n, extranjero) === clave,
+          );
     if (!dicha)
       cambiados.push({
         campo: 'identificacion',
@@ -496,8 +614,8 @@ export function datosCambiadosSinPedir(
   if (totalAntes !== totalDespues) {
     const dicho =
       totalDespues === null
-        ? pideQuitar
-        : valoresDelMensaje(mensaje).has(totalDespues);
+        ? pideQuitar && PIDE_QUITAR_TOTAL.test(mensaje)
+        : totalesDelMensaje(mensaje).has(totalDespues);
     if (!dicho)
       cambiados.push({
         campo: 'total',

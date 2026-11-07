@@ -448,11 +448,17 @@ function avisoDescartada({
     );
   }
   for (const d of datos) {
-    lineas.push(
-      d.campo === 'identificacion'
-        ? `⚠️ Con tu corrección, el NIT o la cédula pasaba de ${d.antes ?? '(ninguno)'} a ${d.despues ?? '(ninguno)'}, y tu mensaje no dice ${d.despues === null ? 'que lo quite' : 'ese número'}.`
-        : `⚠️ Con tu corrección, el total pasaba de ${d.antes === null ? '(ninguno)' : pesos(d.antes)} a ${d.despues === null ? '(ninguno)' : pesos(d.despues)}, y tu mensaje no dice ${d.despues === null ? 'que lo quite' : 'ese valor'}.`,
-    );
+    const pide = d.despues === null ? 'que lo quite' : null;
+    if (d.campo === 'total') {
+      lineas.push(
+        `⚠️ Con tu corrección, el total pasaba de ${d.antes === null ? '(ninguno)' : pesos(d.antes)} a ${d.despues === null ? '(ninguno)' : pesos(d.despues)}, y tu mensaje no dice ${pide ?? 'ese valor después de "total"'}.`,
+      );
+    } else {
+      const que = d.campo === 'nombre' ? 'el cliente' : 'el NIT o la cédula';
+      lineas.push(
+        `⚠️ Con tu corrección, ${que} pasaba de ${d.antes ?? '(ninguno)'} a ${d.despues ?? '(ninguno)'}, y tu mensaje no dice ${pide ?? (d.campo === 'nombre' ? 'ese nombre' : 'ese número')}.`,
+      );
+    }
   }
   lineas.push(
     'No cambié el borrador. Si eso era lo que querías, escríbelo con el nombre del producto (por ejemplo, "quita la brocha" o "la brocha a 15 mil"); si no, escribe la corrección de nuevo.',

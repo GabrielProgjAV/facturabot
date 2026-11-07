@@ -154,7 +154,12 @@ Ollama debe estar corriendo con el modelo oficial descargado.
   revisión de seguridad y los del §8 del plan de la fase 5 están hechos en el PR #9: identificación
   o total que cambian en una corrección deben estar en el mensaje; "quitamanchas" no cuenta como
   "quita"; cédula de menos de 4 dígitos no aprobable; Zod sobre el JSON de `datos` leído de la BD;
-  suma parcial mayor que el total; ítem reemplazado (caso f).
+  suma parcial mayor que el total; ítem reemplazado (caso f); y el nombre del cliente cambiado.
+  **Pendiente antes de la primera factura real** (revisión de seguridad del PR #9, decisión de
+  Gabriel): los controles solo miran las correcciones; al crear un borrador, una identificación, un
+  total o un valor que la IA invente en el primer mensaje se guarda (el usuario lo ve en el resumen).
+  Límite conocido: nombrar no es pedir ("quita la brocha y el vinilo déjalo a 45 mil" deja ir los
+  dos).
 - **Antes de Alegra** (no obligatorio para la primera prueba): advertencia de voz también para
   valores y total; Zod en la respuesta de Whisper; el aviso "no lo reenvíes" junto al "⏳ Sigo
   procesando…"; PR aparte: `OLLAMA_MODELO_TEXTO` por defecto a `qwen2.5:7b`. En vez del test e2e,
