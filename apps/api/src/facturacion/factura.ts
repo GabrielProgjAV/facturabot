@@ -182,11 +182,12 @@ export function conOrigenDeIdentificacion(
 }
 
 /**
- * "quita", "elimina", "borra" y sus formas ("quítale", "bórralo"), pero no "borrador" ni una
- * negación ("no quites la brocha", "no le borres nada").
+ * "quita", "elimina", "borra" y sus formas ("quítale", "elimínalo", "bórramelo", "quitamos"),
+ * como palabra entera: no "borrador" ni "quitamanchas" (un producto). Tampoco una negación ("no
+ * quites la brocha", "no le borres nada").
  */
 const PIDE_QUITAR =
-  /(?<!\b(?:no|sin)\s+(?:(?:le|la|lo|les|las|los|me)\s+)?)\b(?:qu[ií]t|elimin|b[oó]rr(?!ador))/i;
+  /(?<!\b(?:no|sin)\s+(?:(?:le|la|lo|les|las|los|me)\s+)?)\b(?:qu[ií]t|elim[ií]n|b[oó]rr)(?:a|e|o|ar|as|an|es|en|amos|emos|ando|ado|ada|ados|adas)(?:me|te|se|nos)?(?:le|la|lo|les|las|los)?\b/i;
 
 /** Palabras que no distinguen un producto de otro. */
 const PALABRAS_VACIAS = new Set([

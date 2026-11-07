@@ -394,6 +394,30 @@ describe('itemsQuitadosSinPedir (CLAUDE.md: un ítem que desaparece se pregunta)
     expect(itemsQuitadosSinPedir(completo, sinLaAzul, mensaje)).not.toBeNull();
   });
 
+  it.each([
+    'quítamela, la azul',
+    'elimínala, la azul',
+    'bórramela, la azul',
+    'quitemos la azul',
+    'quiten la laca azul',
+    'hay que quitar la azul',
+    'eliminar la azul',
+  ])('"%s": otras formas del verbo también piden quitar', (mensaje) => {
+    expect(itemsQuitadosSinPedir(completo, sinLaAzul, mensaje)).toBeNull();
+  });
+
+  it.each([
+    'agrega un quitamanchas para la azul',
+    'el quitapinturas va con la azul',
+    'la azul es borrable',
+    'eliminador de óxido como la azul',
+  ])('"%s": una palabra compuesta no cuenta como "quita"', (mensaje) => {
+    expect(itemsQuitadosSinPedir(completo, sinLaAzul, mensaje)).toEqual({
+      cantidad: 1,
+      descripciones: ['1/2 laca azul'],
+    });
+  });
+
   it('"borrador" no cuenta como "borra"', () => {
     expect(
       itemsQuitadosSinPedir(
