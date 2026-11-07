@@ -4,6 +4,7 @@ import type {
   RespuestaConversacion,
   VistaBorrador,
 } from '../facturacion/conversacion.service.js';
+import { DatosBorradorInvalidosError } from '../facturacion/factura.js';
 import { duracionOggOpusSegundos } from '../voz/duracion-ogg.js';
 
 /** Máximo de caracteres de un texto (docs/planes/fase-4.3-cola.md §5). */
@@ -65,6 +66,8 @@ export const MENSAJES_FALLA = {
   aprobar:
     'No pude aprobar la factura en este momento. Tu borrador sigue igual: intenta de nuevo en un rato.',
   reinicio: 'No alcancé a procesar tu último mensaje. Reenvíalo, por favor.',
+  datosInvalidos:
+    'Tu borrador guardado tiene datos que no entiendo, así que no lo toqué. Escribe "cancelar" y empieza la factura de nuevo.',
   encoladoSinConfirmar:
     'No pude confirmar si recibí tu mensaje. Espera un momento: si en un minuto no te llega el resumen, reenvíalo.',
 } as const;
@@ -260,6 +263,8 @@ function mensajeDeFalla(
   etapa: Etapa,
 ): string {
   if (err instanceof VozDemasiadoPesadaError) return MENSAJES_FALLA.vozPesada;
+  if (err instanceof DatosBorradorInvalidosError)
+    return MENSAJES_FALLA.datosInvalidos;
   if (err instanceof VozNoAdmitidaError) {
     return err.motivo === 'larga'
       ? MENSAJES_FALLA.vozLarga

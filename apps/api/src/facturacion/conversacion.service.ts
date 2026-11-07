@@ -7,6 +7,7 @@ import {
   conOrigenDeIdentificacion,
   type ItemsQuitados,
   itemsQuitadosSinPedir,
+  leerBorradorFactura,
   motivoNoAprobable,
   pesos,
   resumenBorrador,
@@ -416,8 +417,9 @@ function quieto(fila: Borrador): boolean {
   return Date.now() - fila.actualizadoEn.getTime() > QUIETO_MS;
 }
 
+/** Los `datos` del borrador, validados con Zod (CLAUDE.md: validar el JSON leído de la BD). */
 function datosDe(fila: Borrador): BorradorFactura {
-  return fila.datos as unknown as BorradorFactura;
+  return leerBorradorFactura(fila.datos);
 }
 
 function aJson(borrador: BorradorFactura): Prisma.InputJsonValue {

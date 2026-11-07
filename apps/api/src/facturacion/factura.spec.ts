@@ -3,7 +3,9 @@ import {
   type BorradorFactura,
   calcularTotales,
   conOrigenDeIdentificacion,
+  DatosBorradorInvalidosError,
   itemsQuitadosSinPedir,
+  leerBorradorFactura,
   camposFaltantes,
   motivoNoAprobable,
   pareceEmpresa,
@@ -655,4 +657,48 @@ describe('pareceEmpresa', () => {
       expect(pareceEmpresa(nombre)).toBe(false);
     },
   );
+});
+
+describe('leerBorradorFactura (JSON de la BD validado con Zod)', () => {
+  it('un borrador válido sale igual, con la marca de voz si la tiene', () => {
+    const conVoz = {
+      ...completo,
+      cliente: { ...completo.cliente, identificacionPorVoz: true },
+    };
+
+    expect(leerBorradorFactura(completo)).toEqual(completo);
+    expect(leerBorradorFactura(conVoz)).toEqual(conVoz);
+  });
+
+  it.each([
+    ['null', null, '(raíz)'],
+    ['sin items', { ...completo, items: undefined }, 'items'],
+    [
+      'valor en texto',
+      { ...completo, items: [{ descripcion: 'vinilo', valor: '78.000' }] },
+      'items.0.valor',
+    ],
+    [
+      'valor negativo',
+      { ...completo, items: [{ descripcion: 'vinilo', valor: -1 }] },
+      'items.0.valor',
+    ],
+    ['total con decimales', { ...completo, totalEscrito: 1.5 }, 'totalEscrito'],
+    [
+      'identificación numérica',
+      { ...completo, cliente: { nombre: 'Ana', identificacion: 900123456 } },
+      'cliente.identificacion',
+    ],
+  ])('%s: lanza con la ruta del campo, sin su valor', (_caso, datos, ruta) => {
+    let error: unknown;
+    try {
+      leerBorradorFactura(datos);
+    } catch (e) {
+      error = e;
+    }
+
+    expect(error).toBeInstanceOf(DatosBorradorInvalidosError);
+    expect((error as DatosBorradorInvalidosError).campos).toContain(ruta);
+    expect((error as Error).message).not.toMatch(/78\.000|900123456|Ana/);
+  });
 });

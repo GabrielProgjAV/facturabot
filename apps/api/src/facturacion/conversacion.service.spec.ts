@@ -8,7 +8,10 @@ import {
   fechaCorta,
   QUIETO_MS,
 } from './conversacion.service.js';
-import type { BorradorFactura } from './factura.js';
+import {
+  type BorradorFactura,
+  DatosBorradorInvalidosError,
+} from './factura.js';
 import type { InterpreteTextoService } from './interprete-texto.service.js';
 
 const borrador: BorradorFactura = {
@@ -89,6 +92,44 @@ const sinNit = {
   ...borrador,
   cliente: { nombre: 'Ana', identificacion: null },
 };
+
+describe('ConversacionService: datos de la BD validados', () => {
+  // Ítem con valor en texto: forma que nunca guarda el código actual.
+  const daniado = fila({
+    datos: { ...borrador, items: [{ descripcion: 'vinilo', valor: '50' }] },
+  });
+
+  it('una corrección sobre un borrador con datos inválidos lanza sin llamar a la IA ni escribir', async () => {
+    const { servicio, prisma, interprete } = crear(daniado);
+
+    await expect(
+      servicio.responder(42, 'el total es 50 mil'),
+    ).rejects.toBeInstanceOf(DatosBorradorInvalidosError);
+    expect(interprete.interpretar).not.toHaveBeenCalled();
+    expect(prisma.borrador.update).not.toHaveBeenCalled();
+  });
+
+  it('el botón sobre un borrador con datos inválidos no aprueba', async () => {
+    const { servicio, prisma } = crear(daniado);
+
+    await expect(
+      servicio.aprobar(42, boton(1), USUARIO),
+    ).rejects.toBeInstanceOf(DatosBorradorInvalidosError);
+    expect(prisma.borrador.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('"cancelar" sí funciona: es la salida que se le ofrece al usuario', async () => {
+    const { servicio, prisma } = crear(daniado);
+
+    const respuesta = await servicio.responder(42, 'cancelar');
+
+    expect(prisma.borrador.update).toHaveBeenCalledWith({
+      where: { id: 'b1' },
+      data: { estado: 'CANCELADO' },
+    });
+    expect(respuesta.texto).toContain('Borrador cancelado');
+  });
+});
 
 describe('ConversacionService', () => {
   describe('crear y corregir', () => {

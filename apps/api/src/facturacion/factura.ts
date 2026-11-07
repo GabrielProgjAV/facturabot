@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import {
   analizarIdentificacion,
   esDocumentoExtranjero,
@@ -34,6 +35,48 @@ export interface BorradorFactura {
   items: ItemBorrador[];
   /** Total escrito por el usuario, sin IVA. */
   totalEscrito: number | null;
+}
+
+/** Pesos enteros y no negativos: así los deja `parsePesos`. */
+const pesosSchema = z.number().int().nonnegative().nullable();
+
+/**
+ * Forma de `BorradorFactura` guardada en la BD (`Borrador.datos`). Se valida al leer: la emisión
+ * lee de aquí lo que va a la DIAN, y un JSON de la BD no es de fiar (CLAUDE.md).
+ */
+export const borradorFacturaSchema = z.object({
+  cliente: z.object({
+    nombre: z.string().nullable(),
+    identificacion: z.string().nullable(),
+    identificacionPorVoz: z.boolean().optional(),
+  }),
+  items: z.array(z.object({ descripcion: z.string(), valor: pesosSchema })),
+  totalEscrito: pesosSchema,
+}) satisfies z.ZodType<BorradorFactura>;
+
+/**
+ * Los `datos` guardados no tienen la forma de un borrador (cambio manual en la BD, o un error de
+ * una versión anterior). No se corrigen solos: el usuario cancela y empieza de nuevo.
+ */
+export class DatosBorradorInvalidosError extends Error {
+  override readonly name = 'DatosBorradorInvalidosError';
+  /** @param campos rutas de los campos que fallaron (p. ej. "items.0.valor"), nunca sus valores. */
+  constructor(readonly campos: string[]) {
+    super(`Datos del borrador inválidos en: ${campos.join(', ')}`);
+  }
+}
+
+/** Valida el JSON de `Borrador.datos`; lanza `DatosBorradorInvalidosError` si no cuadra. */
+export function leerBorradorFactura(datos: unknown): BorradorFactura {
+  const resultado = borradorFacturaSchema.safeParse(datos);
+  if (!resultado.success) {
+    throw new DatosBorradorInvalidosError(
+      resultado.error.issues.map(
+        (i) => i.path.map(String).join('.') || '(raíz)',
+      ),
+    );
+  }
+  return resultado.data;
 }
 
 export const TASA_IVA = 0.19;
