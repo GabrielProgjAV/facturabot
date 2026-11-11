@@ -19,6 +19,41 @@ export const respuestaIaSchema = z.object({
 
 export type RespuestaIa = z.infer<typeof respuestaIaSchema>;
 
+/**
+ * Por qué falló el intérprete, en una categoría fija y segura para los logs (Ley 1581 de 2012):
+ * nunca el texto del mensaje, la respuesta de la IA ni datos del cliente.
+ */
+export type CategoriaInterprete =
+  | `ollama_http_${number}`
+  | 'ollama_timeout'
+  | 'ollama_red'
+  | 'ollama_respuesta_invalida'
+  | 'ia_json_invalido'
+  | 'ia_esquema_invalido';
+
+/** Error del intérprete con su categoría. El error original, si lo hay, queda en `cause`. */
+export class ErrorInterprete extends Error {
+  override readonly name = 'ErrorInterprete';
+  constructor(
+    readonly categoria: CategoriaInterprete,
+    opciones?: { cause?: unknown },
+  ) {
+    super(categoria, opciones);
+  }
+}
+
+/**
+ * Textos con los que la IA dice "no hay dato" en lugar de devolver null: se tratan como ausencia
+ * de dato, antes de compararlos con el mensaje (si no, "null" parecería un NIT inventado).
+ */
+const SIN_DATO = new Set(['', 'null', 'none', 'n/a', 'na', 'nil', 'undefined']);
+
+/** El texto de la IA, o null si está vacío o es una forma de decir "no hay dato". */
+export function textoONull(texto: string | null): string | null {
+  const limpio = texto?.trim() ?? '';
+  return SIN_DATO.has(limpio.toLowerCase()) ? null : limpio;
+}
+
 /** Lo que importa de la respuesta de /api/chat de Ollama. */
 const sobreOllamaSchema = z.object({
   message: z.object({ content: z.string() }),
@@ -79,11 +114,10 @@ export function aRespuestaIa(borrador: BorradorFactura): RespuestaIa {
 
 /** Convierte la respuesta de la IA en un borrador, normalizando los pesos. */
 export function aBorrador(respuesta: RespuestaIa): BorradorFactura {
-  const vacioANull = (texto: string | null) => texto?.trim() || null;
   return {
     cliente: {
-      nombre: vacioANull(respuesta.cliente_nombre),
-      identificacion: vacioANull(respuesta.cliente_identificacion),
+      nombre: textoONull(respuesta.cliente_nombre),
+      identificacion: textoONull(respuesta.cliente_identificacion),
     },
     items: respuesta.items.map((item) => ({
       descripcion: item.descripcion.trim(),
@@ -115,30 +149,51 @@ export class InterpreteTextoService {
     const usuario = actual
       ? `Borrador actual: ${JSON.stringify(aRespuestaIa(actual))}\nMensaje: ${texto}`
       : texto;
-    const respuesta = await fetch(`${this.url}/api/chat`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: this.modelo,
-        stream: false,
-        format: z.toJSONSchema(respuestaIaSchema),
-        options: { temperature: 0 },
-        messages: [
-          { role: 'system', content: sistema },
-          { role: 'user', content: usuario },
-        ],
-      }),
-      // Un trabajo real llegó a 116 s (corrección de 9 productos con recarga de qwen): 240 s deja
-      // margen (4.4 §14.2, opción A).
-      signal: AbortSignal.timeout(240_000),
-    });
+    let respuesta: Response;
+    try {
+      respuesta = await fetch(`${this.url}/api/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: this.modelo,
+          stream: false,
+          format: z.toJSONSchema(respuestaIaSchema),
+          options: { temperature: 0 },
+          messages: [
+            { role: 'system', content: sistema },
+            { role: 'user', content: usuario },
+          ],
+        }),
+        // Un trabajo real llegó a 116 s (corrección de 9 productos con recarga de qwen): 240 s deja
+        // margen (4.4 §14.2, opción A).
+        signal: AbortSignal.timeout(240_000),
+      });
+    } catch (err) {
+      // El original va en `cause`: el procesador reintenta si ahí dice ECONNREFUSED.
+      throw new ErrorInterprete(
+        err instanceof Error && err.name === 'TimeoutError'
+          ? 'ollama_timeout'
+          : 'ollama_red',
+        { cause: err },
+      );
+    }
     if (!respuesta.ok) {
-      throw new Error(`Ollama respondió ${respuesta.status}`);
+      throw new ErrorInterprete(`ollama_http_${respuesta.status}`);
     }
     // Respuesta externa: se valida también el sobre, no solo el contenido (CLAUDE.md).
-    const cuerpo = sobreOllamaSchema.parse(await respuesta.json());
-    const datos = respuestaIaSchema.parse(JSON.parse(cuerpo.message.content));
-    const borrador = aBorrador(datos);
+    const cuerpo = sobreOllamaSchema.safeParse(
+      await respuesta.json().catch(() => null),
+    );
+    if (!cuerpo.success) throw new ErrorInterprete('ollama_respuesta_invalida');
+    let contenido: unknown;
+    try {
+      contenido = JSON.parse(cuerpo.data.message.content);
+    } catch {
+      throw new ErrorInterprete('ia_json_invalido');
+    }
+    const datos = respuestaIaSchema.safeParse(contenido);
+    if (!datos.success) throw new ErrorInterprete('ia_esquema_invalido');
+    const borrador = aBorrador(datos.data);
     borrador.totalEscrito = totalSegunMensaje(
       texto,
       borrador.totalEscrito,

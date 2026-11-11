@@ -415,7 +415,38 @@ export async function avisarTrabajoFallido(
 export function describirError(err: unknown): string {
   const nombre = err instanceof Error ? err.name : typeof err;
   const codigo = codigoDe(err);
-  return codigo ? `${nombre} (${codigo})` : nombre;
+  const categoria = categoriaDe(err);
+  return [nombre, categoria && `[${categoria}]`, codigo && `(${codigo})`]
+    .filter(Boolean)
+    .join(' ');
+}
+
+/** Una categoría solo se imprime si tiene esta forma: nunca texto libre. */
+const CATEGORIA_SEGURA = /^[a-z0-9_]{1,64}(?::[a-z0-9_]{1,64})?$/;
+
+/**
+ * Regla de un trigger o nombre de una restricción de la base, tal como los escriben las
+ * migraciones (p. ej. "emisiones_columnas_inmutables", "emisiones_codigo_error_check").
+ */
+const REGLA_BD = /\b((?:emisiones|borradores|empresas)_[a-z_]{1,58})\b/;
+
+/**
+ * Categoría segura del error, o undefined: la que trae un error propio (`categoria`, p. ej.
+ * "ollama_http_500"), o la regla de la base que lo rechazó ("bd_trigger:<regla>" o
+ * "bd_restriccion:<nombre>"). Del mensaje de la base solo se toma ese nombre, nunca el resto.
+ */
+function categoriaDe(err: unknown): string | undefined {
+  if (!(err instanceof Error)) return undefined;
+  const propia = (err as { categoria?: unknown }).categoria;
+  if (typeof propia === 'string') {
+    return CATEGORIA_SEGURA.test(propia) ? propia : 'categoria_invalida';
+  }
+  if (!/^(PrismaClient|DriverAdapterError)/.test(err.name)) return undefined;
+  const regla = REGLA_BD.exec(err.message)?.[1];
+  if (!regla) return undefined;
+  return /_(check|key|fkey|pkey)$/.test(regla)
+    ? `bd_restriccion:${regla}`
+    : `bd_trigger:${regla}`;
 }
 
 /** Código de sistema del error (ECONNREFUSED…), también si fetch lo envuelve en `cause`. */

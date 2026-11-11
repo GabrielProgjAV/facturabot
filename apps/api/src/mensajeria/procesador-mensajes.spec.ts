@@ -2,6 +2,7 @@ import {
   AVISO_DEMORA,
   AVISO_DEMORA_MS,
   avisarTrabajoFallido,
+  describirError,
   type DependenciasProcesador,
   ESPERA_REINTENTO_MS,
   MENSAJES_FALLA,
@@ -9,6 +10,7 @@ import {
   VozDemasiadoPesadaError,
 } from './procesador-mensajes.js';
 import { DatosBorradorInvalidosError } from '../facturacion/factura.js';
+import { ErrorInterprete } from '../facturacion/interprete-texto.service.js';
 import { notaOggSintetica } from '../voz/ogg-sintetico.spec-util.js';
 
 /** Nota de voz sintética de 10 s (sin audio real). */
@@ -246,6 +248,22 @@ describe('procesarMensaje: texto', () => {
 
     expect(deps.responder).toHaveBeenCalledTimes(1);
     expect(deps.esperar).not.toHaveBeenCalled();
+    expectEnviado(deps, MENSAJES_FALLA.texto);
+  });
+
+  it('Ollama caído envuelto por el intérprete (ollama_red): igual reintenta', async () => {
+    const { deps } = crearDeps();
+    deps.responder
+      .mockRejectedValueOnce(
+        new ErrorInterprete('ollama_red', { cause: conexionRechazada() }),
+      )
+      .mockRejectedValueOnce(
+        new ErrorInterprete('ollama_red', { cause: conexionRechazada() }),
+      );
+
+    await procesarMensaje(texto(), 'j1', deps);
+
+    expect(deps.responder).toHaveBeenCalledTimes(2);
     expectEnviado(deps, MENSAJES_FALLA.texto);
   });
 
@@ -663,5 +681,70 @@ describe('procesarMensaje: aviso de demora (4.4 §14.2)', () => {
 
     expect(deps.enviar).toHaveBeenLastCalledWith(CHAT, 'Resumen', null);
     expect(deps.logger.warn).toHaveBeenCalled();
+  });
+});
+
+describe('describirError: diagnóstico sin datos personales (Ley 1581)', () => {
+  /** Un error de Prisma como lo lanza un trigger o un CHECK, con datos en el mensaje. */
+  const deBase = (mensaje: string) =>
+    Object.assign(new Error(mensaje), {
+      name: 'PrismaClientUnknownRequestError',
+    });
+
+  it('un error propio muestra su categoría', () => {
+    expect(describirError(new ErrorInterprete('ollama_http_500'))).toBe(
+      'ErrorInterprete [ollama_http_500]',
+    );
+  });
+
+  it('con categoría y código de sistema, muestra los dos', () => {
+    expect(
+      describirError(
+        new ErrorInterprete('ollama_red', { cause: conexionRechazada() }),
+      ),
+    ).toBe('ErrorInterprete [ollama_red] (ECONNREFUSED)');
+  });
+
+  it('una categoría con otra forma no se imprime tal cual', () => {
+    const error = Object.assign(new Error('x'), {
+      categoria: 'Ana 52111222', // datos ficticios
+    });
+
+    expect(describirError(error)).toBe('Error [categoria_invalida]');
+  });
+
+  it('un trigger de la base: solo el nombre de su regla, nunca el resto del mensaje', () => {
+    const texto = describirError(
+      deBase(
+        'ERROR: emisiones_columnas_inmutables: id, borrador_id… DETAIL: Failing row contains (Ana, 52111222)', // ficticios
+      ),
+    );
+
+    expect(texto).toBe(
+      'PrismaClientUnknownRequestError [bd_trigger:emisiones_columnas_inmutables]',
+    );
+    expect(texto).not.toMatch(/Ana|52111222/);
+  });
+
+  it('una restricción de la base: bd_restriccion con su nombre', () => {
+    expect(
+      describirError(
+        deBase('violates check constraint "emisiones_codigo_error_check"'),
+      ),
+    ).toBe(
+      'PrismaClientUnknownRequestError [bd_restriccion:emisiones_codigo_error_check]',
+    );
+  });
+
+  it('un error de la base sin regla conocida: solo el nombre', () => {
+    expect(describirError(deBase('algo con Ana adentro'))).toBe(
+      'PrismaClientUnknownRequestError',
+    );
+  });
+
+  it('el nombre de una regla no se busca en errores que no son de la base', () => {
+    expect(describirError(new Error('emisiones_columnas_inmutables'))).toBe(
+      'Error',
+    );
   });
 });
