@@ -69,6 +69,10 @@ definitivo al crearlo).
   APROBADO y `Emision` nace en PENDIENTE, con la `date` que se enviará, el modo (`ALEGRA_EMITIR`) y
   la cuenta de Alegra. Después se encola `emitir` (BullMQ, `jobId = emitir-<emisionId>`,
   `attempts: 1`, `maxStalledCount: 0`, `concurrency: 1`).
+- **`fecha_factura` en hora de Colombia** (precisión de Gabriel, 2026-11-10; se implementa en el
+  paso 5): el día se calcula en `America/Bogota`, nunca en UTC. Una venta a las 9 p. m. en Colombia
+  ya es el día siguiente en UTC. Se guarda como `DATE` y se envía tal cual a Alegra; test con una
+  hora de las 7 p. m. a la medianoche de Colombia.
 - **Paso a CREANDO_BORRADOR atómico y guardado antes del POST:** `UPDATE … WHERE estado =
   'PENDIENTE'`; si no cambia ninguna fila, el trabajo se aborta. `observations =
   "facturabot:<emisionId>"`. Al arrancar, un candado de una sola instancia (`pg_try_advisory_lock`)
