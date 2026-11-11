@@ -5,11 +5,18 @@ import { PrismaService } from '../prisma/prisma.service.js';
 import {
   type BorradorFactura,
   conOrigenDeIdentificacion,
+  DatosBorradorInvalidosError,
+  type DatoCambiado,
+  type DatoVaciado,
+  datosCambiadosSinPedir,
   type ItemsQuitados,
   itemsQuitadosSinPedir,
+  itemsReemplazadosSinPedir,
+  leerBorradorFactura,
   motivoNoAprobable,
   pesos,
   resumenBorrador,
+  sinDatosNoDichos,
   type ValorCambiado,
   valoresCambiadosSinPedir,
 } from './factura.js';
@@ -69,13 +76,21 @@ export interface RespuestaConversacion {
 /** Lo que una corrección cambiaba sin que el mensaje lo pidiera; por eso no se guardó. */
 interface CambiosSinPedir {
   quitados: ItemsQuitados | null;
+  /** Descripciones de ítems que la IA cambió por otros sin que el mensaje los nombrara. */
+  reemplazados: string[];
   valores: ValorCambiado[];
+  /** Identificación o total. */
+  datos: DatoCambiado[];
 }
 
-/** El borrador tras crear o corregir; con `descartada`, la corrección no se guardó. */
+/**
+ * El borrador tras crear o corregir; con `descartada`, la corrección no se guardó. `vaciados`:
+ * al crear, lo que la IA leyó sin que estuviera en el mensaje y quedó vacío.
+ */
 interface Escritura {
   fila: Borrador;
   descartada: CambiosSinPedir | null;
+  vaciados: DatoVaciado[];
 }
 
 /** Qué decirle al usuario debajo del resumen. */
@@ -136,19 +151,36 @@ export class ConversacionService {
     }
 
     if (pendiente && quieto(pendiente)) {
-      const nuevo = await this.reemplazar(pendiente, texto, porVoz);
+      // Antes de reemplazar: si se leyera después y los datos viejos fueran inválidos, el error
+      // diría "no lo toqué" con el viejo ya cancelado y el nuevo creado. Con datos inválidos el
+      // aviso va sin nombre: el viejo se cancela igual, que es lo que se le pediría al usuario.
+      let nombre: string | null = null;
+      try {
+        nombre = datosDe(pendiente).cliente.nombre;
+      } catch (err) {
+        if (!(err instanceof DatosBorradorInvalidosError)) throw err;
+        this.logger.warn(
+          'Borrador quieto con datos inválidos: se cancela al reemplazarlo',
+        );
+      }
+      const { fila: nuevo, vaciados } = await this.reemplazar(
+        pendiente,
+        texto,
+        porVoz,
+      );
       const resumen = this.conResumen(nuevo, 'ninguno');
-      const { nombre } = datosDe(pendiente).cliente;
       return {
         ...resumen,
-        texto: `📝 Tenías un borrador sin aprobar del ${fechaCorta(pendiente.actualizadoEn)}${nombre ? ` (${nombre})` : ''}. Lo dejé cancelado y empecé uno nuevo con tu mensaje.\n\n${resumen.texto}`,
+        texto: `📝 Tenías un borrador sin aprobar del ${fechaCorta(pendiente.actualizadoEn)}${nombre ? ` (${nombre})` : ''}. Lo dejé cancelado y empecé uno nuevo con tu mensaje.\n\n${conAvisoVaciados(vaciados, resumen.texto)}`,
       };
     }
 
-    const { fila, descartada } = pendiente
+    const { fila, descartada, vaciados } = pendiente
       ? await this.corregir(pendiente, texto, porVoz)
       : await this.crear(chatId, texto, porVoz);
     const resumen = this.conResumen(fila, 'ninguno');
+    if (vaciados.length > 0)
+      return { ...resumen, texto: conAvisoVaciados(vaciados, resumen.texto) };
     if (!descartada) return resumen;
     // La corrección no se guardó: el resumen es el mismo que el usuario ya tenía.
     return {
@@ -300,19 +332,31 @@ export class ConversacionService {
       porVoz,
     );
     const quitados = itemsQuitadosSinPedir(actual, borrador, texto);
+    const reemplazados = itemsReemplazadosSinPedir(actual, borrador, texto);
     const valores = valoresCambiadosSinPedir(actual, borrador, texto);
-    if (quitados || valores.length > 0) {
-      // Solo cantidades: nunca descripciones ni valores en los logs (Ley 1581 de 2012).
+    const datos = datosCambiadosSinPedir(actual, borrador, texto);
+    if (
+      quitados ||
+      reemplazados.length > 0 ||
+      valores.length > 0 ||
+      datos.length > 0
+    ) {
+      // Solo cantidades y nombres de campo: nunca descripciones, valores ni identificaciones en
+      // los logs (Ley 1581 de 2012).
       this.logger.warn(
-        `Corrección descartada: ${quitados?.cantidad ?? 0} ítems desaparecían y ${valores.length} valores cambiaban sin que el mensaje lo pidiera`,
+        `Corrección descartada: ${quitados?.cantidad ?? 0} ítems desaparecían, ${reemplazados.length} se reemplazaban, ${valores.length} valores cambiaban y cambiaban [${datos.map((d) => d.campo).join(', ')}], sin que el mensaje lo pidiera`,
       );
-      return { fila: pendiente, descartada: { quitados, valores } };
+      return {
+        fila: pendiente,
+        descartada: { quitados, reemplazados, valores, datos },
+        vaciados: [],
+      };
     }
     const fila = await this.prisma.borrador.update({
       where: { id: pendiente.id },
       data: { datos: aJson(borrador), version: { increment: 1 } },
     });
-    return { fila, descartada: null };
+    return { fila, descartada: null, vaciados: [] };
   }
 
   /**
@@ -323,13 +367,9 @@ export class ConversacionService {
     viejo: Borrador,
     texto: string,
     porVoz: boolean,
-  ): Promise<Borrador> {
-    const borrador = conOrigenDeIdentificacion(
-      undefined,
-      await this.interprete.interpretar(texto, undefined),
-      porVoz,
-    );
-    return this.prisma.$transaction(async (tx) => {
+  ): Promise<{ fila: Borrador; vaciados: DatoVaciado[] }> {
+    const { borrador, vaciados } = await this.interpretarNuevo(texto, porVoz);
+    const fila = await this.prisma.$transaction(async (tx) => {
       const { count } = await tx.borrador.updateMany({
         where: { id: viejo.id, estado: 'PENDIENTE', version: viejo.version },
         data: { estado: 'CANCELADO' },
@@ -344,6 +384,31 @@ export class ConversacionService {
         data: { chatId: viejo.chatId, datos: aJson(borrador) },
       });
     });
+    return { fila, vaciados };
+  }
+
+  /**
+   * Interpreta el primer mensaje de un borrador y deja vacío lo que la IA leyó sin que estuviera
+   * escrito (`sinDatosNoDichos`): nunca se guarda un dato inventado.
+   */
+  private async interpretarNuevo(
+    texto: string,
+    porVoz: boolean,
+  ): Promise<{ borrador: BorradorFactura; vaciados: DatoVaciado[] }> {
+    const { borrador, vaciados } = sinDatosNoDichos(
+      await this.interprete.interpretar(texto, undefined),
+      texto,
+    );
+    if (vaciados.length > 0) {
+      // Solo la cantidad y los campos: nunca los valores (Ley 1581 de 2012).
+      this.logger.warn(
+        `Borrador nuevo: ${vaciados.length} datos que no estaban en el mensaje quedaron vacíos [${vaciados.map((v) => v.campo).join(', ')}]`,
+      );
+    }
+    return {
+      borrador: conOrigenDeIdentificacion(undefined, borrador, porVoz),
+      vaciados,
+    };
   }
 
   private async crear(
@@ -351,16 +416,12 @@ export class ConversacionService {
     texto: string,
     porVoz: boolean,
   ): Promise<Escritura> {
-    const borrador = conOrigenDeIdentificacion(
-      undefined,
-      await this.interprete.interpretar(texto, undefined),
-      porVoz,
-    );
+    const { borrador, vaciados } = await this.interpretarNuevo(texto, porVoz);
     try {
       const fila = await this.prisma.borrador.create({
         data: { chatId: BigInt(chatId), datos: aJson(borrador) },
       });
-      return { fila, descartada: null };
+      return { fila, descartada: null, vaciados };
     } catch (err) {
       // El índice único parcial detectó un PENDIENTE que no vimos al leer (otra copia del bot
       // o un cambio manual en la base). Se mira solo el code: `meta.target` no viene relleno
@@ -388,8 +449,27 @@ export class ConversacionService {
   }
 }
 
+/**
+ * El resumen con el aviso de lo que se dejó vacío al crear el borrador, si hay algo. Se muestra el
+ * dato leído para que el usuario lo escriba si era correcto.
+ */
+function conAvisoVaciados(vaciados: DatoVaciado[], resumen: string): string {
+  if (vaciados.length === 0) return resumen;
+  const cuales = vaciados.map((v) => {
+    if (v.campo === 'item') return `${v.descripcion}: ${pesos(v.valor)}`;
+    if (v.campo === 'total') return `total: ${pesos(v.valor)}`;
+    return `${v.campo === 'nombre' ? 'cliente' : 'NIT o cédula'}: ${v.valor}`;
+  });
+  return `⚠️ Entendí datos que no están escritos en tu mensaje y los dejé vacíos (❓): ${cuales.join('; ')}. Si son correctos, escríbelos.\n\n${resumen}`;
+}
+
 /** Qué cambiaba la corrección sin pedirlo, y cómo pedirlo si era lo que se quería. */
-function avisoDescartada({ quitados, valores }: CambiosSinPedir): string {
+function avisoDescartada({
+  quitados,
+  reemplazados,
+  valores,
+  datos,
+}: CambiosSinPedir): string {
   const lineas: string[] = [];
   if (quitados) {
     const cuales = quitados.descripciones.length
@@ -399,12 +479,30 @@ function avisoDescartada({ quitados, valores }: CambiosSinPedir): string {
       `⚠️ Con tu corrección desaparecían ${quitados.cantidad} producto(s), y tu mensaje no pide quitarlos por su nombre${cuales}.`,
     );
   }
+  if (reemplazados.length > 0) {
+    lineas.push(
+      `⚠️ Con tu corrección se cambiaba por otro producto: ${reemplazados.join(', ')}, y tu mensaje no lo nombra.`,
+    );
+  }
   for (const v of valores) {
     lineas.push(
       v.nuevo
         ? `⚠️ Con tu corrección aparecía ${v.descripcion} con ${pesos(v.despues)}, y ese valor no está en tu mensaje.`
         : `⚠️ Con tu corrección, ${v.descripcion} pasaba de ${pesos(v.antes)} a ${pesos(v.despues)}, y tu mensaje no dice ese valor para ese producto.`,
     );
+  }
+  for (const d of datos) {
+    const pide = d.despues === null ? 'que lo quite' : null;
+    if (d.campo === 'total') {
+      lineas.push(
+        `⚠️ Con tu corrección, el total pasaba de ${d.antes === null ? '(ninguno)' : pesos(d.antes)} a ${d.despues === null ? '(ninguno)' : pesos(d.despues)}, y tu mensaje no dice ${pide ?? 'ese valor después de "total"'}.`,
+      );
+    } else {
+      const que = d.campo === 'nombre' ? 'el cliente' : 'el NIT o la cédula';
+      lineas.push(
+        `⚠️ Con tu corrección, ${que} pasaba de ${d.antes ?? '(ninguno)'} a ${d.despues ?? '(ninguno)'}, y tu mensaje no dice ${pide ?? (d.campo === 'nombre' ? 'ese nombre' : 'ese número')}.`,
+      );
+    }
   }
   lineas.push(
     'No cambié el borrador. Si eso era lo que querías, escríbelo con el nombre del producto (por ejemplo, "quita la brocha" o "la brocha a 15 mil"); si no, escribe la corrección de nuevo.',
@@ -416,8 +514,9 @@ function quieto(fila: Borrador): boolean {
   return Date.now() - fila.actualizadoEn.getTime() > QUIETO_MS;
 }
 
+/** Los `datos` del borrador, validados con Zod (CLAUDE.md: validar el JSON leído de la BD). */
 function datosDe(fila: Borrador): BorradorFactura {
-  return fila.datos as unknown as BorradorFactura;
+  return leerBorradorFactura(fila.datos);
 }
 
 function aJson(borrador: BorradorFactura): Prisma.InputJsonValue {

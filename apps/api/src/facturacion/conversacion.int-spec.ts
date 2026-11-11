@@ -19,6 +19,10 @@ const borrador: BorradorFactura = {
   totalEscrito: null,
 };
 
+/** Primer mensaje con todos los datos del borrador: nada queda vacío al crear. */
+const MENSAJE_NUEVO =
+  'factura a Ferretería Ejemplo NIT 900000001-2, vinilo 50 mil'; // NIT ficticio
+
 const config = {
   get: () => process.env.DATABASE_URL,
 } as unknown as ConfigService<Env, true>;
@@ -85,10 +89,7 @@ afterAll(async () => {
 
 describe('aprobación por versión contra PostgreSQL', () => {
   it('flujo completo: crear, marcar como mostrada, "sí" no aprueba, el botón sí', async () => {
-    const creada = await servicio.responder(
-      CHAT_A,
-      'factura a Ferretería Ejemplo',
-    );
+    const creada = await servicio.responder(CHAT_A, MENSAJE_NUEVO);
     const id = creada.mostrar!.borradorId;
     creadas.push(id);
     expect(await estadoDe(id)).toEqual({
@@ -146,10 +147,7 @@ describe('aprobación por versión contra PostgreSQL', () => {
     // se mostró.
     const a = await crearPendiente(CHAT_A, 1, 1);
     await servicio.responder(CHAT_A, 'cancelar');
-    const nueva = await servicio.responder(
-      CHAT_A,
-      'factura a Ferretería Ejemplo',
-    );
+    const nueva = await servicio.responder(CHAT_A, MENSAJE_NUEVO);
     const b = nueva.mostrar!.borradorId;
     creadas.push(b);
     await servicio.marcarMostrada(b, 1);
@@ -248,10 +246,7 @@ describe('aprobación por versión contra PostgreSQL', () => {
     const viejo = await crearPendiente(CHAT_A, 1, 1);
     await envejecer(viejo.id);
 
-    const respuesta = await servicio.responder(
-      CHAT_A,
-      'factura a Ferretería Ejemplo',
-    );
+    const respuesta = await servicio.responder(CHAT_A, MENSAJE_NUEVO);
     const nuevo = respuesta.mostrar!.borradorId;
     creadas.push(nuevo);
 

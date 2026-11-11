@@ -16,8 +16,14 @@
  */
 const PRIMOS_DV = [3, 7, 13, 17, 19, 23, 29, 37, 41] as const;
 
+/**
+ * Menos dígitos que esto no se acepta como cédula ni NIT: casi siempre es un número incompleto.
+ * Decidido por Gabriel el 2026-11-04 (reversible); no viene de una fuente oficial.
+ */
+export const MINIMO_DIGITOS = 4;
+
 export type FormaIdentificacion =
-  /** 1 a 8 dígitos: cédula antigua, o NIT de persona natural (su cédula). */
+  /** 4 a 8 dígitos: cédula antigua, o NIT de persona natural (su cédula). */
   | 'cedula_antigua'
   /** 10 dígitos que empiezan por 1 a 5: cédula con NUIP, o NIT de persona natural. */
   | 'cedula_nuip'
@@ -215,6 +221,7 @@ function tieneFormaDeNit(resto: string, numero: string): boolean {
 }
 
 function formaSegunNumero(numero: string): FormaIdentificacion {
+  if (numero.length < MINIMO_DIGITOS) return 'desconocida';
   if (numero.length <= 8) return 'cedula_antigua';
   // Una cédula de 10 dígitos que empieza por 6 a 9 tiene la forma de un NIT con el DV pegado
   // ("9000000012", ficticio): no hay NUIP confirmados en ese rango (hallazgo 1, decisión de Gabriel).
@@ -231,6 +238,9 @@ function formaSegunNumero(numero: string): FormaIdentificacion {
 }
 
 function problemaDeForma(numero: string, dv: string | null): string {
+  if (numero.length < MINIMO_DIGITOS) {
+    return `Tiene ${numero.length} ${numero.length === 1 ? 'dígito' : 'dígitos'}: es muy corto para una cédula o un NIT. ¿Lo revisas?`;
+  }
   if (numero.length === 10 && numero.startsWith('0')) {
     return 'Tiene 10 dígitos y empieza por 0: no coincide con una cédula ni con un NIT. ¿Lo revisas?';
   }
