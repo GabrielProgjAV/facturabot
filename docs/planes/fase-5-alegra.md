@@ -72,7 +72,27 @@ definitivo al crearlo).
 - **`fecha_factura` en hora de Colombia** (precisión de Gabriel, 2026-11-10; se implementa en el
   paso 5): el día se calcula en `America/Bogota`, nunca en UTC. Una venta a las 9 p. m. en Colombia
   ya es el día siguiente en UTC. Se guarda como `DATE` y se envía tal cual a Alegra; test con una
-  hora de las 7 p. m. a la medianoche de Colombia.
+  hora de las 7 p. m. a la medianoche de Colombia. Solo se puede actualizar mientras la emisión
+  esté en PENDIENTE y sin `id_externo` (si el PC estuvo apagado días, sale con la fecha del día en
+  que se emite).
+- **Protecciones en la base** (migración `proteger_emisiones`, revisión de seguridad del PR #10):
+  triggers y CHECK hacen que borrador, proveedor, cuenta y modo no cambien, que el `id_externo` se
+  guarde una sola vez, que EMITIDA y CANCELADA sean finales, que la emisión solo nazca de un
+  borrador APROBADO y que un borrador que ya no está PENDIENTE no cambie.
+- **Para los pasos 5 y 6** (de la misma revisión, aprobado por Gabriel el 2026-11-10):
+  - Leer `fecha_factura` siempre en UTC (`toISOString().slice(0, 10)`): Prisma devuelve un `DATE`
+    como medianoche UTC, y formateado en hora de Bogotá daría el día anterior. Con test.
+  - Filtrar por proveedor, cuenta y modo **en la consulta**, antes de cualquier llamada a Alegra:
+    una fila de otra cuenta se reporta y nunca causa ni un `GET`.
+  - Pasar `id_externo` y la cuenta por Zod a una forma canónica antes de guardarlos o compararlos.
+  - **Obligatorio antes de usar datos reales:** base aparte para `test:int` (nombre terminado en
+    `_test`) y una guarda que se niegue a correr en otra base.
+  - Supresión de datos (Ley 1581): se anonimiza `borradores.datos`; la fila y la factura se
+    conservan.
+  - **Pendiente obligatorio antes de tener datos reales** (Gabriel, 2026-11-10): el trigger
+    `borradores_proteger_no_pendientes` impide anonimizar `datos` de un borrador APROBADO, y eso
+    choca con la supresión anterior. Hay que definir una excepción controlada (por ejemplo,
+    permitir solo el cambio a una forma anonimizada fija). Sin resolver todavía.
 - **Paso a CREANDO_BORRADOR atómico y guardado antes del POST:** `UPDATE … WHERE estado =
   'PENDIENTE'`; si no cambia ninguna fila, el trabajo se aborta. `observations =
   "facturabot:<emisionId>"`. Al arrancar, un candado de una sola instancia (`pg_try_advisory_lock`)

@@ -100,7 +100,10 @@ enum EstadoDian {
 /// Emisión de un borrador aprobado ante el proveedor de facturación (fase 5, §4 del plan).
 /// Un borrador produce como máximo una emisión (`borradorId` único) y, por el diseño en dos tiempos,
 /// como máximo una factura. Las reglas de "solo timbrar lo propio" se refuerzan en la base con
-/// restricciones CHECK escritas a mano en la migración (Prisma no las modela).
+/// restricciones CHECK y triggers escritos a mano (Prisma no los modela), en las migraciones
+/// `crear_emisiones` y `proteger_emisiones`: borrador, proveedor, cuenta y modo no cambian; el id
+/// externo se guarda una vez; EMITIDA y CANCELADA son finales; solo nace de un borrador APROBADO; y
+/// un borrador que ya no está PENDIENTE no cambia. Las prueba `emision-restricciones.int-spec.ts`.
 model Emision {
   id              String               @id @default(uuid(7)) @db.Uuid
   /// Un borrador, una emisión. Restrict: no se puede borrar un borrador que ya tiene emisión.
