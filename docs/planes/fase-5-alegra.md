@@ -267,3 +267,35 @@ reconciliación del §4; el timbrado repetido no duplica); huecos de numeración
 se timbran (pregunta 7); CUFE y estados sin confirmar hasta hablar con soporte; choque Res. 202 frente a los
 contactos de Alegra (mitigado: solo consumidor final al principio); un solo PC sin respaldo
 (mitigado con los requisitos del §9 y el plan B manual).
+
+## 13. Bitácora de fricción
+
+Mediciones de las pruebas manuales que no se arreglan en esta fase. La optimización de latencia
+(opción D de la 4.4 §14.2: la IA devuelve solo los cambios) va **después de Alegra** (Gabriel,
+2026-11-11).
+
+**2026-11-11, prueba manual en `main` (con los PR #10 y #11), 7 mensajes de texto.** Datos
+ficticios. El modelo estaba precargado (`qwen2.5:7b`, `keep_alive` de 30 min, 12 de 29 capas en la
+GPU, contexto de 4096) y no hubo recarga entre mensajes. Durante la prueba no corría ningún test ni
+otro proceso del agente.
+
+| # | Mensaje | Trabajo | De eso, Ollama (`/api/chat`) | Tokens del pedido |
+|---|---|---|---|---|
+| 1 | cancelar | 0,4 s | — | — |
+| 2 | primer borrador (sin NIT) | **77,6 s** | **70 s** | 450 |
+| 3 | NIT sin DV | 9,6 s | 9,2 s | 656 |
+| 4 | NIT completo | 8,4 s | 8,0 s | 666 |
+| 5 | cancelar | 0,3 s | — | — |
+| 6 | cédula de 3 dígitos | 6,6 s | 6,1 s | 452 |
+| 7 | cancelar | 0,3 s | — | — |
+
+- Lo lento fue el **primer** pedido de la sesión: 70 s en Ollama, frente a 6 a 9 s de los
+  siguientes, con un pedido de tamaño parecido (450 frente a 452 tokens del mensaje 6). La
+  precarga solo carga los pesos; la primera inferencia real paga además el arranque del cálculo en
+  la GPU y la preparación de la gramática del formato JSON. Es una hipótesis: no se midió por
+  separado.
+- Fuera de Ollama, el primer trabajo tardó unos 7,6 s más (los demás, menos de 0,5 s): primera
+  conexión a la base y primer envío a Telegram de la sesión. También hipótesis.
+- Mitigación posible, sin cambiar código del bot: que la precarga del arranque diario haga una
+  inferencia corta de verdad con el mismo formato, no solo la carga. Se decide junto con la
+  opción D.
