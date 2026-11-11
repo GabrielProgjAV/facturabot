@@ -62,7 +62,8 @@ function ollamaSimulado(
   _url: unknown,
   opciones: RequestInit,
 ): Promise<Response> {
-  const pedido = JSON.parse(String(opciones.body)) as {
+  // El intérprete siempre envía el cuerpo como texto JSON.
+  const pedido = JSON.parse(opciones.body as string) as {
     messages: { role: string; content: string }[];
   };
   const usuario = pedido.messages.find((m) => m.role === 'user')?.content ?? '';
