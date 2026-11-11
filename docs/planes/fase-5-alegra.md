@@ -93,6 +93,35 @@ definitivo al crearlo).
     `borradores_proteger_no_pendientes` impide anonimizar `datos` de un borrador APROBADO, y eso
     choca con la supresión anterior. Hay que definir una excepción controlada (por ejemplo,
     permitir solo el cambio a una forma anonimizada fija). Sin resolver todavía.
+- **Pendiente obligatorio antes del código de emisión (paso 6)**: segunda revisión de seguridad del
+  PR #10, del 2026-11-10. Cambia el esquema, así que lo decide Gabriel.
+  - **Alta:** `DELETE` de una emisión no está protegido. El borrador sigue APROBADO, se puede
+    insertar otra emisión y repetir el paso 1, lo que duplica la factura. Propuesta: `BEFORE DELETE`
+    que siempre rechace. Los tests limpian con transacción revertida o sobre la base `_test`.
+  - `TRUNCATE` no dispara los triggers por fila. Propuesta: `BEFORE TRUNCATE` en `emisiones` y
+    `borradores` que siempre rechace.
+  - Un `INSERT` puede nacer en un estado avanzado (BORRADOR_CREADO, EMITIDA…). Propuesta: exigir
+    PENDIENTE y sin `id_externo`, número, CUFE ni código de error al nacer; los tests recorren las
+    transiciones con UPDATE.
+  - Transiciones como lista de **permitidas** (no de prohibidas), por ejemplo: PENDIENTE →
+    CREANDO_BORRADOR o CANCELADA; CREANDO_BORRADOR → BORRADOR_CREADO, NO_CREADA o DESCONOCIDO;
+    DESCONOCIDO → BORRADOR_CREADO o PENDIENTE; BORRADOR_CREADO → TIMBRANDO o DESCONOCIDO;
+    TIMBRANDO → EMITIDA o RECHAZADA; RECHAZADA → TIMBRANDO o EMITIDA; NO_CREADA → PENDIENTE.
+    Gabriel confirma la tabla.
+  - La fecha se puede cambiar tras DESCONOCIDO → PENDIENTE, y entonces la reconciliación buscaría
+    por otra fecha. Opciones: marca de "ya salió de PENDIENTE", o pasar por NO_CREADA (humano
+    confirma que no existe) antes de volver a PENDIENTE. Decide Gabriel.
+  - Aprobación coherente en `borradores`: APROBADO exige `aprobado_por` y `aprobado_en` (CHECK), y
+    PENDIENTE → APROBADO no puede cambiar `datos` ni `version`, y exige `version_mostrada =
+    version`.
+  - Bajas: `numero`, `cufe` y `emitida_en` se escriben una vez; `estado_dian` no sale de ACEPTADA o
+    RECHAZADA; SOLO_BORRADOR sin `estado_dian`; `codigo_error` con prefijo conocido
+    (`http_`, `alegra_`…); `SET search_path` en las funciones; textos sin espacios al inicio o al
+    final.
+  - **Antes del token de producción:** la app se conecta con el usuario dueño de las tablas
+    (superusuario en la imagen oficial), que puede apagar los triggers. Separar un rol para
+    migraciones y otro para la app, sin DELETE ni TRUNCATE. Decide Gabriel.
+  - Prueba de integración del paso 6: nunca se timbra una fila de otra cuenta ni de otro modo.
 - **Paso a CREANDO_BORRADOR atómico y guardado antes del POST:** `UPDATE … WHERE estado =
   'PENDIENTE'`; si no cambia ninguna fila, el trabajo se aborta. `observations =
   "facturabot:<emisionId>"`. Al arrancar, un candado de una sola instancia (`pg_try_advisory_lock`)
