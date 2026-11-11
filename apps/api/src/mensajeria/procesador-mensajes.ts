@@ -415,7 +415,82 @@ export async function avisarTrabajoFallido(
 export function describirError(err: unknown): string {
   const nombre = err instanceof Error ? err.name : typeof err;
   const codigo = codigoDe(err);
-  return codigo ? `${nombre} (${codigo})` : nombre;
+  const categoria = categoriaDe(err);
+  return [nombre, categoria && `[${categoria}]`, codigo && `(${codigo})`]
+    .filter(Boolean)
+    .join(' ');
+}
+
+/** Una categoría solo se imprime si tiene esta forma: nunca texto libre. */
+const CATEGORIA_SEGURA = /^[a-z0-9_]{1,64}(?::[a-z0-9_]{1,64})?$/;
+
+/** Candidatos a nombre de regla o restricción dentro del mensaje de la base. */
+const CANDIDATO_REGLA_BD =
+  /\b(?:emisiones|borradores|empresas)_[a-z_]{1,58}\b/g;
+
+/**
+ * Nombres que se pueden imprimir: los que escriben las migraciones (restricciones, índices y reglas
+ * de los triggers). Es una lista cerrada: un mensaje de la base puede traer los argumentos de la
+ * consulta (textos del usuario), así que nada que no esté aquí llega al log. Al agregar una
+ * restricción o una regla en una migración, se agrega aquí.
+ */
+const REGLAS_BD = new Set([
+  'borradores_pkey',
+  'borradores_chat_id_estado_idx',
+  'borradores_chat_id_pendiente_key',
+  'borradores_no_pendiente_inmutable',
+  'empresas_pkey',
+  'empresas_nit_key',
+  'emisiones_pkey',
+  'emisiones_borrador_id_key',
+  'emisiones_borrador_id_fkey',
+  'emisiones_estado_idx',
+  'emisiones_proveedor_cuenta_id_externo_key',
+  'emisiones_id_externo_segun_estado_check',
+  'emisiones_solo_borrador_no_timbra_check',
+  'emisiones_sin_id_externo_segun_estado_check',
+  'emisiones_codigo_error_check',
+  'emisiones_textos_no_vacios_check',
+  'emisiones_emitida_completa_check',
+  'emisiones_solo_borrador_sin_timbre_check',
+  'emisiones_columnas_inmutables',
+  'emisiones_id_externo_inmutable',
+  'emisiones_fecha_factura_inmutable',
+  'emisiones_estado_final',
+  'emisiones_transicion_a_cancelada',
+  'emisiones_transicion_a_pendiente',
+  'emisiones_borrador_aprobado',
+]);
+
+/** Errores de la base que traen la regla en el mensaje (no los de validación de Prisma). */
+const ERRORES_BD = new Set([
+  'PrismaClientKnownRequestError',
+  'PrismaClientUnknownRequestError',
+  'DriverAdapterError',
+]);
+
+/** Un código de sistema solo se imprime con esta forma ("ECONNREFUSED", "P2002", "23514"). */
+const CODIGO_SEGURO = /^[A-Z0-9_]{1,32}$/;
+
+/**
+ * Categoría segura del error, o undefined: la que trae un error propio (`categoria`, p. ej.
+ * "ollama_http_500"), o la regla de la base que lo rechazó ("bd_trigger:<regla>" o
+ * "bd_restriccion:<nombre>"). Del mensaje de la base solo se toma ese nombre, nunca el resto.
+ */
+function categoriaDe(err: unknown): string | undefined {
+  if (!(err instanceof Error)) return undefined;
+  const propia = (err as { categoria?: unknown }).categoria;
+  if (typeof propia === 'string') {
+    return CATEGORIA_SEGURA.test(propia) ? propia : 'categoria_invalida';
+  }
+  if (!ERRORES_BD.has(err.name)) return undefined;
+  const candidatos = err.message.match(CANDIDATO_REGLA_BD) ?? [];
+  if (candidatos.length === 0) return undefined;
+  const regla = candidatos.find((c) => REGLAS_BD.has(c));
+  if (!regla) return 'bd_regla_desconocida';
+  return /_(check|key|fkey|pkey)$/.test(regla)
+    ? `bd_restriccion:${regla}`
+    : `bd_trigger:${regla}`;
 }
 
 /** Código de sistema del error (ECONNREFUSED…), también si fetch lo envuelve en `cause`. */
@@ -426,7 +501,8 @@ function codigoDe(err: unknown): string | undefined {
       cause?: unknown;
       errors?: unknown[];
     };
-    if (typeof code === 'string') return code;
+    if (typeof code === 'string')
+      return CODIGO_SEGURO.test(code) ? code : 'codigo_invalido';
     actual = cause ?? errors?.[0];
   }
   return undefined;
