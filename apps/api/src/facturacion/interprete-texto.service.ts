@@ -46,7 +46,8 @@ export class ErrorInterprete extends Error {
  * Textos con los que la IA dice "no hay dato" en lugar de devolver null: se tratan como ausencia
  * de dato, antes de compararlos con el mensaje (si no, "null" parecería un NIT inventado).
  */
-const SIN_DATO = new Set(['', 'null', 'none', 'n/a', 'na', 'nil', 'undefined']);
+// Sin "na" ni "nil": pueden ser un nombre real (revisión de seguridad del PR #11).
+const SIN_DATO = new Set(['', 'null', 'none', 'n/a', 'undefined']);
 
 /** El texto de la IA, o null si está vacío o es una forma de decir "no hay dato". */
 export function textoONull(texto: string | null): string | null {

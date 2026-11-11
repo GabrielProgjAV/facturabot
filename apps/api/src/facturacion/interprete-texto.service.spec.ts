@@ -64,24 +64,18 @@ describe('aBorrador', () => {
 });
 
 describe('textoONull: la IA dice "no hay dato" con texto', () => {
-  it.each([
-    'null',
-    'NULL',
-    ' None ',
-    'n/a',
-    'N/A',
-    'na',
-    'nil',
-    'undefined',
-    '',
-    '   ',
-  ])('"%s" es ausencia de dato', (texto) => {
-    expect(textoONull(texto)).toBeNull();
-  });
+  it.each(['null', 'NULL', ' None ', 'n/a', 'N/A', 'undefined', '', '   '])(
+    '"%s" es ausencia de dato',
+    (texto) => {
+      expect(textoONull(texto)).toBeNull();
+    },
+  );
 
   it.each([
     ['900000001-2', '900000001-2'], // NIT ficticio
     [' Nala ', 'Nala'],
+    ['Na', 'Na'], // puede ser un apellido
+    ['Nil', 'Nil'], // puede ser un nombre
     ['Nulla SAS', 'Nulla SAS'],
   ])('"%s" es un dato', (texto, esperado) => {
     expect(textoONull(texto)).toBe(esperado);

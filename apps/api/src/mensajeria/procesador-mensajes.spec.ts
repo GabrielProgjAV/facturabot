@@ -736,6 +736,31 @@ describe('describirError: diagnóstico sin datos personales (Ley 1581)', () => {
     );
   });
 
+  it('un texto con forma de regla que no está en la lista no se imprime', () => {
+    const texto = describirError(
+      deBase('Invalid value: { datos: "borradores_de_ana_gomez" }'), // ficticio
+    );
+
+    expect(texto).toBe(
+      'PrismaClientUnknownRequestError [bd_regla_desconocida]',
+    );
+  });
+
+  it('un error de validación de Prisma (trae los argumentos) no se revisa', () => {
+    const error = Object.assign(
+      new Error('emisiones_columnas_inmutables datos: Ana'), // ficticio
+      { name: 'PrismaClientValidationError' },
+    );
+
+    expect(describirError(error)).toBe('PrismaClientValidationError');
+  });
+
+  it('un código de sistema con otra forma no se imprime tal cual', () => {
+    const error = Object.assign(new Error('x'), { code: 'Ana 52111222' }); // ficticio
+
+    expect(describirError(error)).toBe('Error (codigo_invalido)');
+  });
+
   it('un error de la base sin regla conocida: solo el nombre', () => {
     expect(describirError(deBase('algo con Ana adentro'))).toBe(
       'PrismaClientUnknownRequestError',
