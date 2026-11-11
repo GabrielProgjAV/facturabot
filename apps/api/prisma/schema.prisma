@@ -51,10 +51,91 @@ model Borrador {
   aprobadoEn      DateTime?      @map("aprobado_en") @db.Timestamptz
   creadoEn        DateTime       @default(now()) @map("creado_en") @db.Timestamptz
   actualizadoEn   DateTime       @updatedAt @map("actualizado_en") @db.Timestamptz
+  /// La emisión de este borrador, si ya se aprobó (a lo sumo una: `Emision.borradorId` es único).
+  emision         Emision?
 
   @@unique([chatId], where: raw("estado = 'PENDIENTE'"), map: "borradores_chat_id_pendiente_key")
   @@index([chatId, estado])
   @@map("borradores")
+}
+
+/// Dónde va una emisión (docs/planes/fase-5-alegra.md §4). Ver el modelo Emision.
+enum EstadoEmision {
+  /// Nació junto con la aprobación (bandeja de salida); todavía no tocó al proveedor.
+  PENDIENTE
+  /// Se guardó justo antes del POST que crea el borrador en el proveedor (paso 1).
+  CREANDO_BORRADOR
+  /// El proveedor creó su borrador y su id está en `idExterno`.
+  BORRADOR_CREADO
+  /// Se guardó justo antes de pedir el timbrado (paso 2). Repetirlo no duplica.
+  TIMBRANDO
+  /// Timbrada: tiene número; el resultado de la DIAN va en `estadoDian`.
+  EMITIDA
+  /// El proveedor rechazó el timbrado de esa factura. Se resuelve a mano en su web.
+  RECHAZADA
+  /// Error definitivo al crear el borrador (400 sin factura, 401, 402, 403, 429): no existe nada.
+  NO_CREADA
+  /// Timeout o respuesta rara al crear: no se sabe si existe. Se reconcilia; nunca se repite solo.
+  DESCONOCIDO
+  /// El usuario dijo que ya la facturó a mano (plan B) antes de que saliera: no se emite.
+  CANCELADA
+}
+
+/// Con qué valor de ALEGRA_EMITIR nació la emisión. Una fila SOLO_BORRADOR nunca se timbra, aunque
+/// después se encienda la bandera o cambie el token (§4, hallazgo alto de la revisión del PR #8).
+enum ModoEmision {
+  /// ALEGRA_EMITIR apagada (desarrollo): termina en BORRADOR_CREADO.
+  SOLO_BORRADOR
+  /// ALEGRA_EMITIR encendida: crea el borrador y lo timbra ante la DIAN.
+  TIMBRAR
+}
+
+/// Resultado de la DIAN, en nuestros términos (no los nombres de estado de Alegra).
+enum EstadoDian {
+  PENDIENTE
+  ACEPTADA
+  RECHAZADA
+}
+
+/// Emisión de un borrador aprobado ante el proveedor de facturación (fase 5, §4 del plan).
+/// Un borrador produce como máximo una emisión (`borradorId` único) y, por el diseño en dos tiempos,
+/// como máximo una factura. Las reglas de "solo timbrar lo propio" se refuerzan en la base con
+/// restricciones CHECK y triggers escritos a mano (Prisma no los modela), en las migraciones
+/// `crear_emisiones` y `proteger_emisiones`: borrador, proveedor, cuenta y modo no cambian; el id
+/// externo se guarda una vez; EMITIDA y CANCELADA son finales; solo nace de un borrador APROBADO; y
+/// un borrador que ya no está PENDIENTE no cambia. Las prueba `emision-restricciones.int-spec.ts`.
+model Emision {
+  id              String               @id @default(uuid(7)) @db.Uuid
+  /// Un borrador, una emisión. Restrict: no se puede borrar un borrador que ya tiene emisión.
+  borradorId      String               @unique @map("borrador_id") @db.Uuid
+  borrador        Borrador             @relation(fields: [borradorId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  proveedor       ProveedorFacturacion
+  /// Id de la cuenta (compañía) del proveedor con la que nació. Antes de timbrar se exige que sea la
+  /// cuenta del token actual: una fila de la cuenta de prueba nunca se timbra en la real.
+  cuentaProveedor String               @map("cuenta_proveedor")
+  modo            ModoEmision
+  estado          EstadoEmision        @default(PENDIENTE)
+  /// Fecha de la factura que se envía (día de Colombia), fijada al nacer: la reconciliación busca
+  /// por esta fecha aunque se reintente otro día.
+  fechaFactura    DateTime             @map("fecha_factura") @db.Date
+  /// Id de la factura en el proveedor (texto: Alegra pasa a UUID). Null hasta crear el borrador.
+  idExterno       String?              @map("id_externo")
+  /// Número de la factura (con prefijo), al timbrar.
+  numero          String?
+  cufe            String?
+  estadoDian      EstadoDian?          @map("estado_dian")
+  /// Código del último error (p. ej. "http_401", "alegra_3226"). Nunca texto con datos personales.
+  codigoError     String?              @map("codigo_error")
+  creadaEn        DateTime             @default(now()) @map("creada_en") @db.Timestamptz
+  actualizadaEn   DateTime             @updatedAt @map("actualizada_en") @db.Timestamptz
+  emitidaEn       DateTime?            @map("emitida_en") @db.Timestamptz
+
+  /// Una factura del proveedor pertenece a una sola emisión (la reconciliación no puede adoptarla
+  /// dos veces). Los NULL no chocan entre sí en PostgreSQL.
+  @@unique([proveedor, cuentaProveedor, idExterno], map: "emisiones_proveedor_cuenta_id_externo_key")
+  /// La recuperación al arrancar busca por estado.
+  @@index([estado])
+  @@map("emisiones")
 }
 
 /// Comercio que usa el bot. Todas las tablas futuras (clientes, borradores, facturas)
