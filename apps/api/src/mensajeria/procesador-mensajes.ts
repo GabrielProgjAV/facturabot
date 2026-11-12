@@ -127,6 +127,8 @@ export interface DependenciasProcesador {
   ): Promise<void>;
   /** Quita los botones de un mensaje ya enviado. */
   quitarBoton(chatId: number, messageId: number): Promise<void>;
+  /** Aviso del token de Alegra para anteponer a la respuesta (una vez al día), o null. */
+  avisoDelDia?: () => string | null;
   /** Pausa antes del reintento; los tests la reemplazan para no esperar. */
   esperar(ms: number): Promise<void>;
   logger: Pick<LoggerService, 'log' | 'warn' | 'error'>;
@@ -199,8 +201,15 @@ export async function procesarMensaje(
     mostrar?.aprobable === true
       ? { borradorId: mostrar.borradorId, version: mostrar.version }
       : null;
+  // Aviso del token de Alegra, una vez al día, antes de la respuesta (fase 5, §2).
+  const aviso = deps.avisoDelDia?.() ?? null;
+  const texto = aviso
+    ? `${aviso}
+
+${respuesta.texto}`
+    : respuesta.texto;
   try {
-    await deps.enviar(trabajo.chatId, respuesta.texto, boton);
+    await deps.enviar(trabajo.chatId, texto, boton);
   } catch (err) {
     // Sin envío confirmado no se marca como mostrado: ese borrador no se puede aprobar (§3).
     deps.logger.error(

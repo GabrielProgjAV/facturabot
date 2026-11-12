@@ -773,3 +773,25 @@ describe('describirError: diagnóstico sin datos personales (Ley 1581)', () => {
     );
   });
 });
+
+describe('procesarMensaje: aviso del token de Alegra', () => {
+  it('antepone el aviso del día a la respuesta', async () => {
+    const { deps } = crearDeps();
+    const aviso = () => '⚠️ El token de Alegra vence en 3 día(s).';
+
+    await procesarMensaje(texto(), 'j1', { ...deps, avisoDelDia: aviso });
+
+    expect(deps.enviar).toHaveBeenCalledWith(
+      CHAT,
+      '⚠️ El token de Alegra vence en 3 día(s).\n\nResumen',
+      expect.anything(),
+    );
+  });
+
+  it('sin aviso, la respuesta va igual', async () => {
+    const { deps } = crearDeps();
+    await procesarMensaje(texto(), 'j1', { ...deps, avisoDelDia: () => null });
+
+    expectEnviado(deps, 'Resumen');
+  });
+});

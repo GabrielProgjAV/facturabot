@@ -3,6 +3,7 @@ import { ConfigModule } from '@nestjs/config';
 import { AppController } from './app.controller.js';
 import { AppService } from './app.service.js';
 import { validateEnv } from './config/env.schema.js';
+import { AvisoTokenService } from './emision/aviso-token.service.js';
 import { ConversacionService } from './facturacion/conversacion.service.js';
 import { InterpreteTextoService } from './facturacion/interprete-texto.service.js';
 import { ColaMensajesService } from './mensajeria/cola-mensajes.service.js';
@@ -26,6 +27,7 @@ import { PrismaModule } from './prisma/prisma.module.js';
     ConversacionService,
     TranscriptorService,
     ColaMensajesService,
+    AvisoTokenService,
     TelegramService,
   ],
 })
