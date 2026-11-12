@@ -11,8 +11,9 @@ const CUENTA = 'cuenta-ficticia-1';
 const db = new PrismaClient({
   adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL }),
 });
-/** Solo se borran las filas que creó esta prueba (primero emisiones: la FK es RESTRICT). */
-const borradores: string[] = [];
+/** Un id externo distinto en cada uso: las filas no se borran entre tests. */
+let ultimoId = 0;
+const idUnico = () => String(++ultimoId);
 
 async function borrador(
   estado: 'PENDIENTE' | 'APROBADO' | 'CANCELADO' = 'APROBADO',
@@ -20,7 +21,6 @@ async function borrador(
   const { id } = await db.borrador.create({
     data: { chatId: CHAT, estado, datos: { n: 1 } },
   });
-  borradores.push(id);
   return id;
 }
 
@@ -40,13 +40,16 @@ async function emision(datos: DatosEmision = {}, borradorId?: string) {
   });
 }
 
-const CREADO: DatosEmision = { estado: 'BORRADOR_CREADO', idExterno: '9' };
-const EMITIDA: DatosEmision = {
+const creado = (): DatosEmision => ({
+  estado: 'BORRADOR_CREADO',
+  idExterno: idUnico(),
+});
+const emitida = (): DatosEmision => ({
   estado: 'EMITIDA',
-  idExterno: '9',
+  idExterno: idUnico(),
   estadoDian: 'PENDIENTE',
   emitidaEn: new Date('2026-11-10T15:00:00Z'),
-};
+});
 
 function cambiar(id: string, data: Prisma.EmisionUncheckedUpdateInput) {
   return db.emision.update({ where: { id }, data });
@@ -63,9 +66,12 @@ async function rechazoDe(promesa: Promise<unknown>): Promise<string> {
 }
 
 afterEach(async () => {
-  await db.emision.deleteMany({ where: { borradorId: { in: borradores } } });
-  await db.borrador.deleteMany({ where: { id: { in: borradores } } });
-  borradores.length = 0;
+  // Las filas no se borran (los triggers lo impiden y la base de pruebas se recrea en cada corrida):
+  // los PENDIENTE que quedan se cancelan, para que el siguiente test empiece sin ninguno.
+  await db.borrador.updateMany({
+    where: { chatId: CHAT, estado: 'PENDIENTE' },
+    data: { estado: 'CANCELADO' },
+  });
 });
 
 afterAll(async () => {
@@ -114,18 +120,20 @@ describe('emisiones: un borrador, una emisión', () => {
 
 describe('emisiones: una factura del proveedor, una emisión', () => {
   it('el mismo id externo en la misma cuenta se rechaza con P2002', async () => {
-    await emision(CREADO);
+    const datos = creado();
+    await emision(datos);
 
-    const error: unknown = await emision(CREADO).catch((e: unknown) => e);
+    const error: unknown = await emision(datos).catch((e: unknown) => e);
 
     expect((error as Prisma.PrismaClientKnownRequestError).code).toBe('P2002');
   });
 
   it('el mismo id externo en otra cuenta sí se acepta (los ids son de cada cuenta)', async () => {
-    await emision(CREADO);
+    const datos = creado();
+    await emision(datos);
 
     await expect(
-      emision({ ...CREADO, cuentaProveedor: 'cuenta-ficticia-2' }),
+      emision({ ...datos, cuentaProveedor: 'cuenta-ficticia-2' }),
     ).resolves.toBeDefined();
   });
 
@@ -147,7 +155,7 @@ describe('emisiones: restricciones CHECK', () => {
   );
 
   it('EMITIDA sin id externo se rechaza', async () => {
-    const texto = await rechazoDe(emision({ ...EMITIDA, idExterno: null }));
+    const texto = await rechazoDe(emision({ ...emitida(), idExterno: null }));
 
     expect(texto).toContain('emisiones_id_externo_segun_estado_check');
   });
@@ -155,7 +163,7 @@ describe('emisiones: restricciones CHECK', () => {
   it.each(['PENDIENTE', 'CREANDO_BORRADOR', 'NO_CREADA', 'CANCELADA'] as const)(
     '%s con id externo se rechaza: lo que ya existe en el proveedor no vuelve al paso 1',
     async (estado) => {
-      const texto = await rechazoDe(emision({ estado, idExterno: '9' }));
+      const texto = await rechazoDe(emision({ estado, idExterno: idUnico() }));
 
       expect(texto).toContain('emisiones_sin_id_externo_segun_estado_check');
     },
@@ -173,14 +181,14 @@ describe('emisiones: restricciones CHECK', () => {
 
   it('DESCONOCIDO con id externo se acepta (la factura no coincidió antes de timbrar)', async () => {
     await expect(
-      emision({ estado: 'DESCONOCIDO', idExterno: '9' }),
+      emision({ estado: 'DESCONOCIDO', idExterno: idUnico() }),
     ).resolves.toBeDefined();
   });
 
   it.each(['TIMBRANDO', 'EMITIDA', 'RECHAZADA'] as const)(
     'una fila SOLO_BORRADOR no puede pasar a %s, ni con un UPDATE directo',
     async (estado) => {
-      const fila = await emision({ ...CREADO, modo: 'SOLO_BORRADOR' });
+      const fila = await emision({ ...creado(), modo: 'SOLO_BORRADOR' });
 
       const texto = await rechazoDe(
         // Con los datos de una EMITIDA completa, para que el rechazo sea por el modo.
@@ -202,7 +210,7 @@ describe('emisiones: restricciones CHECK', () => {
   ] as const)(
     'una fila SOLO_BORRADOR no puede tener %s',
     async (_campo, datos) => {
-      const fila = await emision({ ...CREADO, modo: 'SOLO_BORRADOR' });
+      const fila = await emision({ ...creado(), modo: 'SOLO_BORRADOR' });
 
       const texto = await rechazoDe(cambiar(fila.id, datos));
 
@@ -214,7 +222,7 @@ describe('emisiones: restricciones CHECK', () => {
     ['sin emitida_en', { emitidaEn: null }],
     ['sin estado_dian', { estadoDian: null }],
   ] as const)('EMITIDA %s se rechaza', async (_caso, datos) => {
-    const texto = await rechazoDe(emision({ ...EMITIDA, ...datos }));
+    const texto = await rechazoDe(emision({ ...emitida(), ...datos }));
 
     expect(texto).toContain('emisiones_emitida_completa_check');
   });
@@ -247,7 +255,7 @@ describe('emisiones: restricciones CHECK', () => {
 
 describe('emisiones: columnas que no cambian (trigger)', () => {
   it('modo y estado cambiados en el mismo UPDATE: una fila SOLO_BORRADOR no se vuelve TIMBRAR', async () => {
-    const fila = await emision({ ...CREADO, modo: 'SOLO_BORRADOR' });
+    const fila = await emision({ ...creado(), modo: 'SOLO_BORRADOR' });
 
     const texto = await rechazoDe(
       cambiar(fila.id, { modo: 'TIMBRAR', estado: 'TIMBRANDO' }),
@@ -262,7 +270,7 @@ describe('emisiones: columnas que no cambian (trigger)', () => {
     ['proveedor', { proveedor: 'SIIGO' }],
     ['creada_en', { creadaEn: new Date('2020-01-01') }],
   ] as const)('%s no se puede cambiar', async (_columna, datos) => {
-    const fila = await emision({ ...CREADO, modo: 'SOLO_BORRADOR' });
+    const fila = await emision({ ...creado(), modo: 'SOLO_BORRADOR' });
 
     const texto = await rechazoDe(cambiar(fila.id, datos));
 
@@ -285,7 +293,7 @@ describe('emisiones: columnas que no cambian (trigger)', () => {
   ] as const)(
     'el id externo ya guardado no admite %s',
     async (_caso, datos) => {
-      const fila = await emision(CREADO);
+      const fila = await emision(creado());
 
       const texto = await rechazoDe(cambiar(fila.id, datos));
 
@@ -296,7 +304,9 @@ describe('emisiones: columnas que no cambian (trigger)', () => {
   it('el id externo se guarda una vez, al pasar a BORRADOR_CREADO', async () => {
     const fila = await emision({ estado: 'CREANDO_BORRADOR' });
 
-    await expect(cambiar(fila.id, CREADO)).resolves.toMatchObject(CREADO);
+    const datos = creado();
+
+    await expect(cambiar(fila.id, datos)).resolves.toMatchObject(datos);
   });
 
   it('fecha_factura se puede actualizar en PENDIENTE y sin id externo', async () => {
@@ -312,7 +322,7 @@ describe('emisiones: columnas que no cambian (trigger)', () => {
   it.each([
     ['CREANDO_BORRADOR', { estado: 'CREANDO_BORRADOR' }],
     ['DESCONOCIDO', { estado: 'DESCONOCIDO' }],
-    ['BORRADOR_CREADO', CREADO],
+    ['BORRADOR_CREADO', creado()],
   ] as const)('fecha_factura no cambia en %s', async (_estado, datos) => {
     const fila = await emision(datos);
 
@@ -329,7 +339,7 @@ describe('emisiones: transiciones de estado (trigger)', () => {
     const { id } = await emision();
 
     await cambiar(id, { estado: 'CREANDO_BORRADOR' });
-    await cambiar(id, CREADO);
+    await cambiar(id, creado());
     await cambiar(id, { estado: 'TIMBRANDO' });
     await expect(
       cambiar(id, {
@@ -346,7 +356,7 @@ describe('emisiones: transiciones de estado (trigger)', () => {
     'TIMBRANDO',
     'BORRADOR_CREADO',
   ] as const)('EMITIDA es final: no pasa a %s', async (estado) => {
-    const fila = await emision(EMITIDA);
+    const fila = await emision(emitida());
 
     const texto = await rechazoDe(cambiar(fila.id, { estado }));
 
@@ -354,7 +364,7 @@ describe('emisiones: transiciones de estado (trigger)', () => {
   });
 
   it('EMITIDA sí admite completar número, CUFE y estado DIAN', async () => {
-    const fila = await emision(EMITIDA);
+    const fila = await emision(emitida());
 
     await expect(
       cambiar(fila.id, {
@@ -417,7 +427,7 @@ describe('emisiones: transiciones de estado (trigger)', () => {
   it.each(['BORRADOR_CREADO', 'TIMBRANDO'] as const)(
     '%s no vuelve al paso 1 ni borrando el id externo',
     async (estado) => {
-      const fila = await emision({ ...CREADO, estado });
+      const fila = await emision({ ...creado(), estado });
 
       const texto = await rechazoDe(
         cambiar(fila.id, { estado: 'PENDIENTE', idExterno: null }),

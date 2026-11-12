@@ -14,8 +14,6 @@ const CHAT_B = 999000002n; // chat ficticio
 const db = new PrismaClient({
   adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL }),
 });
-/** Solo se borran las filas que creó esta prueba. */
-const creadas: string[] = [];
 
 async function crearBorrador(
   chatId: bigint,
@@ -24,7 +22,6 @@ async function crearBorrador(
   const fila = await db.borrador.create({
     data: { chatId, estado, datos: {} },
   });
-  creadas.push(fila.id);
   return fila;
 }
 
@@ -40,8 +37,12 @@ beforeAll(async () => {
 });
 
 afterEach(async () => {
-  await db.borrador.deleteMany({ where: { id: { in: creadas } } });
-  creadas.length = 0;
+  // Las filas no se borran (los triggers lo impiden y la base de pruebas se recrea en cada corrida):
+  // los PENDIENTE que quedan se cancelan, para que el siguiente test empiece sin ninguno.
+  await db.borrador.updateMany({
+    where: { chatId: { in: [CHAT_A, CHAT_B] }, estado: 'PENDIENTE' },
+    data: { estado: 'CANCELADO' },
+  });
 });
 
 afterAll(async () => {

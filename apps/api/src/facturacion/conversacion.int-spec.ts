@@ -31,8 +31,6 @@ const interprete = {
   interpretar: vi.fn().mockResolvedValue(borrador),
 } as unknown as InterpreteTextoService;
 const servicio = new ConversacionService(db, interprete);
-/** Solo se borran las filas que creó esta prueba. */
-const creadas: string[] = [];
 
 async function crearPendiente(
   chatId: number,
@@ -47,7 +45,6 @@ async function crearPendiente(
       versionMostrada,
     },
   });
-  creadas.push(fila.id);
   return fila;
 }
 
@@ -79,8 +76,15 @@ beforeAll(async () => {
 });
 
 afterEach(async () => {
-  await db.borrador.deleteMany({ where: { id: { in: creadas } } });
-  creadas.length = 0;
+  // Las filas no se borran (los triggers lo impiden y la base de pruebas se recrea en cada corrida):
+  // los PENDIENTE que quedan se cancelan, para que el siguiente test empiece sin ninguno.
+  await db.borrador.updateMany({
+    where: {
+      chatId: { in: [BigInt(CHAT_A), BigInt(CHAT_B)] },
+      estado: 'PENDIENTE',
+    },
+    data: { estado: 'CANCELADO' },
+  });
 });
 
 afterAll(async () => {
@@ -91,7 +95,6 @@ describe('aprobación por versión contra PostgreSQL', () => {
   it('flujo completo: crear, marcar como mostrada, "sí" no aprueba, el botón sí', async () => {
     const creada = await servicio.responder(CHAT_A, MENSAJE_NUEVO);
     const id = creada.mostrar!.borradorId;
-    creadas.push(id);
     expect(await estadoDe(id)).toEqual({
       estado: 'PENDIENTE',
       version: 1,
@@ -149,7 +152,6 @@ describe('aprobación por versión contra PostgreSQL', () => {
     await servicio.responder(CHAT_A, 'cancelar');
     const nueva = await servicio.responder(CHAT_A, MENSAJE_NUEVO);
     const b = nueva.mostrar!.borradorId;
-    creadas.push(b);
     await servicio.marcarMostrada(b, 1);
 
     const respuesta = await servicio.aprobar(
@@ -248,7 +250,6 @@ describe('aprobación por versión contra PostgreSQL', () => {
 
     const respuesta = await servicio.responder(CHAT_A, MENSAJE_NUEVO);
     const nuevo = respuesta.mostrar!.borradorId;
-    creadas.push(nuevo);
 
     expect(respuesta.texto).toContain('Lo dejé cancelado');
     expect(nuevo).not.toBe(viejo.id);

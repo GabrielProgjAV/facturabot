@@ -106,7 +106,6 @@ beforeAll(async () => {
 
 afterAll(async () => {
   vi.unstubAllGlobals();
-  await db.borrador.deleteMany({ where: { chatId: BigInt(CHAT) } });
   await db.$disconnect();
 });
 
