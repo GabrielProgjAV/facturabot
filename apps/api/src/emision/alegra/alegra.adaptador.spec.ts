@@ -41,11 +41,15 @@ afterEach(async () => {
   await alegra.detener();
 });
 
+/** Uno solo para todo el archivo: `tokenFicticio()` pone `exp` según la hora, y dos llamadas en
+ * segundos distintos dan tokens distintos (el test del encabezado fallaba a veces). */
+const TOKEN = tokenFicticio();
+
 function adaptador(
   opciones: Partial<{ token: string; emitir: boolean; url: string }> = {},
 ) {
   return new AlegraAdaptador({
-    token: tokenFicticio(),
+    token: TOKEN,
     url: alegra.url,
     emitir: true,
     ...opciones,
@@ -137,7 +141,7 @@ describe('AlegraAdaptador.crearBorrador', () => {
       estadoDian: null,
     });
     const [pedido] = alegra.pedidosA('POST /invoices');
-    expect(pedido.autorizacion).toBe(`Bearer ${tokenFicticio()}`);
+    expect(pedido.autorizacion).toBe(`Bearer ${TOKEN}`);
     expect(pedido.cuerpo).toEqual({
       date: '2026-11-12',
       dueDate: '2026-11-12',
