@@ -146,6 +146,27 @@ definitivo al crearlo).
   `api.alegra.com`.
 - **Límite conocido:** el aviso diario del token se marca antes de enviar; si ese envío falla, ese
   día no se repite.
+- **Decisiones de Gabriel para el paso 6 (2026-11-12):**
+  - **Tercera migración** en el mismo PR, antes del servicio: `DELETE` y `TRUNCATE` bloqueados en
+    `emisiones` y `borradores`; una emisión solo nace en PENDIENTE y sin id externo; transiciones
+    como lista de **permitidas**; un APROBADO exige quién y cuándo, y aprobar no cambia `datos` ni
+    `version`. **Nunca se desactivan los triggers**, ni en la base de desarrollo ni en la real.
+    Borrar datos personales (Ley 1581) será por **anonimización**, nunca con `DELETE`, y necesita
+    la excepción controlada pendiente.
+  - **DESCONOCIDO no vuelve directo a PENDIENTE.** Antes de pedirle nada al usuario, búsqueda
+    automática con la fecha **original** y el día siguiente; si aparece `facturabot:<emisionId>` en
+    `observations`, se reconcilia sola. Si no, el bot dice qué buscar en Alegra (fecha original,
+    cliente y `facturabot:<emisionId>`) y ofrece el botón "No existe en Alegra": solo el usuario
+    autorizado puede tocarlo, y queda registrado quién y cuándo. Con eso pasa a NO_CREADA, y desde
+    ahí se puede reintentar (NO_CREADA → PENDIENTE).
+  - **Cliente (adelanto del paso 7):** sin nombre ni identificación es "consumidor final" y se
+    emite. Con NIT o cédula **no** se ofrece el "✅ Aprobar" normal: antes del botón se avisa que
+    esa venta no se facturará y no se crea emisión. A medias (nombre sin identificación o al revés)
+    el bot pide el dato o que diga "consumidor final". Los datos que vació `sinDatosNoDichos` no
+    cuentan como consumidor final.
+  - **Sin token válido** (falta, venció o no trae cuenta): no se crea emisión, el aviso sale
+    **antes** del botón de aprobar, y ese borrador queda marcado **para siempre** como "facturar a
+    mano": nunca se emite después, aunque vuelva el token (sería un duplicado).
 - **Paso a CREANDO_BORRADOR atómico y guardado antes del POST:** `UPDATE … WHERE estado =
   'PENDIENTE'`; si no cambia ninguna fila, el trabajo se aborta. `observations =
   "facturabot:<emisionId>"`. Al arrancar, un candado de una sola instancia (`pg_try_advisory_lock`)
@@ -258,6 +279,8 @@ un proveedor falso (201, 400 con y sin factura, timeout, reinicio).
 10. (Para la fase 12, no urge) ¿Qué autorización exige un servicio multiempresa sobre la API?
 11. ¿Cuál es el identificador estable de la cuenta o empresa para la API? (Hoy se usa el campo
     `org` del JWT, que no está documentado.)
+12. ¿Hay un monto máximo para facturar a consumidor final (sin identificar al comprador)? No está
+    en la investigación; no se aplica ningún tope hasta saberlo.
 
 Ya respondida (2026-11-06): la tienda tiene el plan **Contabilidad Emprendedor**, que según la tabla
 de precios incluye la API. Si aun así Alegra responde 402, se pregunta a soporte.
