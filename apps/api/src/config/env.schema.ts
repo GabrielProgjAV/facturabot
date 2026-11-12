@@ -22,6 +22,22 @@ export const envSchema = z.object({
   OLLAMA_URL: z.url().default('http://localhost:11434'),
   OLLAMA_MODELO_TEXTO: z.string().min(1).default('qwen2.5:3b'),
   WHISPER_URL: z.url().default('http://localhost:9000'),
+  // Alegra (docs/planes/fase-5-alegra.md §2). JWT de Integraciones: secreto, solo en .env. Vacío =
+  // sin proveedor (los borradores funcionan, nada se envía a Alegra).
+  ALEGRA_TOKEN: z
+    .string()
+    .trim()
+    .default('')
+    .refine(
+      (t) => t === '' || /^[\w-]+\.[\w-]+\.[\w-]+$/.test(t),
+      'ALEGRA_TOKEN debe ser el JWT de Integraciones de Alegra (tres partes separadas por puntos)',
+    ),
+  // Solo https: el token viaja en cada pedido.
+  ALEGRA_URL: z
+    .url({ protocol: /^https$/ })
+    .default('https://api.alegra.com/api/v1'),
+  // Apagada por defecto: con false nunca se envía el timbrado (stamp) ante la DIAN.
+  ALEGRA_EMITIR: z.stringbool().default(false),
   // IDs de chat que pueden usar el bot, separados por comas. Vacío = nadie (seguro por defecto).
   TELEGRAM_CHATS_PERMITIDOS: z
     .string()
