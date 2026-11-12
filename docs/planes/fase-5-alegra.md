@@ -25,7 +25,12 @@ número, CUFE y PDF. En desarrollo solo se crean **borradores** en la cuenta de 
   `Authorization: Bearer` (probado el 2026-11-06 contra `api.alegra.com/api/v1`; no hace falta
   `ALEGRA_USUARIO`). El JWT **vence** (el de prueba, a los 16 días) y trae dentro datos del usuario y
   una `api_key`: se trata entero como secreto y nunca se decodifica en los logs.
-- **Vencimiento:** al arrancar, el código lee solo el campo `exp` del token (sin imprimir nada más).
+- **Cuenta (`emisiones.cuenta_proveedor`)** (decisión de Gabriel, 2026-11-12): el campo `org` del
+  JWT, un UUID por organización. `GET /company` no trae un id, solo el NIT de la empresa, que podría
+  coincidir entre la cuenta de prueba y la real. **`org` no está documentado por Alegra** (pregunta
+  11 del §10). Si el token no trae `org` o no tiene forma de UUID, el bot se niega a emitir. Nunca se
+  registra completo: al arrancar, el log muestra solo sus últimos 4 caracteres.
+- **Vencimiento:** al arrancar, el código lee solo los campos `exp` y `org` del token (sin imprimir nada más).
   Si faltan menos de 5 días, el log lo avisa y el bot se lo dice al usuario autorizado una vez al día;
   si ya venció, la emisión queda apagada con un aviso claro (los borradores siguen funcionando). Un
   401 de Alegra se trata como NO_CREADA "token vencido o revocado".
@@ -232,6 +237,8 @@ un proveedor falso (201, 400 con y sin factura, timeout, reinicio).
    emitir un JWT de Integraciones con vencimiento más largo, o el token clásico (Basic) sigue
    vigente y sin vencimiento? (La página de autenticación de la API solo documenta Basic.)
 10. (Para la fase 12, no urge) ¿Qué autorización exige un servicio multiempresa sobre la API?
+11. ¿Cuál es el identificador estable de la cuenta o empresa para la API? (Hoy se usa el campo
+    `org` del JWT, que no está documentado.)
 
 Ya respondida (2026-11-06): la tienda tiene el plan **Contabilidad Emprendedor**, que según la tabla
 de precios incluye la API. Si aun así Alegra responde 402, se pregunta a soporte.
