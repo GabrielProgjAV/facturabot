@@ -441,13 +441,19 @@ const CANDIDATO_REGLA_BD =
  * Nombres que se pueden imprimir: los que escriben las migraciones (restricciones, índices y reglas
  * de los triggers). Es una lista cerrada: un mensaje de la base puede traer los argumentos de la
  * consulta (textos del usuario), así que nada que no esté aquí llega al log. Al agregar una
- * restricción o una regla en una migración, se agrega aquí.
+ * restricción o una regla en una migración, se agrega aquí; `reglas-bd.spec.ts` compara esta
+ * lista con las migraciones y falla si sobra o falta un nombre.
  */
-const REGLAS_BD = new Set([
+export const REGLAS_BD: ReadonlySet<string> = new Set([
   'borradores_pkey',
   'borradores_chat_id_estado_idx',
   'borradores_chat_id_pendiente_key',
   'borradores_no_pendiente_inmutable',
+  'borradores_aprobacion_coherente',
+  'borradores_nacer_pendiente',
+  'borradores_destino_solo_aprobado_check',
+  'borradores_aprobacion_completa_check',
+  'borradores_sin_borrado',
   'empresas_pkey',
   'empresas_nit_key',
   'emisiones_pkey',
@@ -465,10 +471,12 @@ const REGLAS_BD = new Set([
   'emisiones_columnas_inmutables',
   'emisiones_id_externo_inmutable',
   'emisiones_fecha_factura_inmutable',
-  'emisiones_estado_final',
-  'emisiones_transicion_a_cancelada',
-  'emisiones_transicion_a_pendiente',
+  'emisiones_transicion_no_permitida',
+  'emisiones_no_existe_sin_confirmar',
+  'emisiones_cancelada_sin_quien',
   'emisiones_borrador_aprobado',
+  'emisiones_nacer_pendiente',
+  'emisiones_sin_borrado',
 ]);
 
 /** Errores de la base que traen la regla en el mensaje (no los de validación de Prisma). */
@@ -497,7 +505,7 @@ function categoriaDe(err: unknown): string | undefined {
   if (candidatos.length === 0) return undefined;
   const regla = candidatos.find((c) => REGLAS_BD.has(c));
   if (!regla) return 'bd_regla_desconocida';
-  return /_(check|key|fkey|pkey)$/.test(regla)
+  return /_(check|key|fkey|pkey|idx)$/.test(regla)
     ? `bd_restriccion:${regla}`
     : `bd_trigger:${regla}`;
 }
