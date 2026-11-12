@@ -228,6 +228,16 @@ definitivo al crearlo).
   cancelar);
   CREANDO_BORRADOR pasa a DESCONOCIDO y se reconcilia; BORRADOR_CREADO (solo modo real) y TIMBRANDO
   repiten el paso 2; EMITIDA con estado DIAN pendiente y RECHAZADA se vuelven a consultar.
+- **Pendiente (Gabriel, 2026-11-12): intentos agotados → aviso por el chat.** Si una emisión queda
+  en TIMBRANDO o DESCONOCIDO después de agotar los intentos automáticos (los 3 del paso 2, o la
+  reconciliación a 1 y 5 min), el bot le avisa al usuario autorizado por el chat. No se reintenta en
+  silencio en cada arranque: lo que haga el arranque con esa fila queda visible en el chat.
+  Decidido por Gabriel (2026-11-12): **reintenta y avisa**, con dos condiciones:
+  1. El reintento respeta el **modo guardado en la fila**: una emisión SOLO_BORRADOR nunca se
+     timbra, ni al arrancar ni en ningún reintento. En desarrollo no se manda `stamp`, punto.
+  2. **Un intento por arranque**, no un bucle. Si tras ese intento sigue sin resolverse, el aviso
+     dice qué revisar en Alegra: número o id externo, fecha de la factura y
+     `facturabot:<emisionId>`.
 
 ## 5. Puerto `ProveedorFacturacion` y adaptador de Alegra
 
@@ -447,6 +457,12 @@ otro proceso del agente.
    SOLO_BORRADOR, no cruzar cuentas.
 8. Subagentes `control-calidad` y `seguridad`, PR y mostrarle la descripción a Gabriel, con los
    textos de "no se facturará" y "facturar a mano".
+
+**Pendiente agregado (Gabriel, 2026-11-12), entra en los puntos 4 a 6:** una emisión que queda en
+TIMBRANDO o DESCONOCIDO tras agotar los intentos avisa por el chat; nunca se reintenta en silencio
+en cada arranque (§4). Decidido: reintenta y avisa, respetando el modo de la fila (SOLO_BORRADOR
+nunca se timbra) y con un solo intento por arranque; si no se resuelve, el aviso dice qué revisar en
+Alegra. Con test de integración.
 
 **Decisiones del 2026-11-12** (detalle en §4): tercera migración en este PR; nunca desactivar
 triggers; supresión por Ley 1581 por anonimización (excepción pendiente, §8); DESCONOCIDO pasa por
