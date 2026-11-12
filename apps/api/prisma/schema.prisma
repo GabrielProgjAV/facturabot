@@ -37,26 +37,39 @@ enum EstadoBorrador {
 /// `datos` guarda un BorradorFactura (src/facturacion/factura.ts) como JSON: su forma aún cambia.
 /// TODO: sin empresaId hasta que exista la relación chat → empresa (piloto multiempresa).
 model Borrador {
-  id              String         @id @default(uuid(7)) @db.Uuid
-  chatId          BigInt         @map("chat_id")
-  estado          EstadoBorrador @default(PENDIENTE)
+  id              String          @id @default(uuid(7)) @db.Uuid
+  chatId          BigInt          @map("chat_id")
+  estado          EstadoBorrador  @default(PENDIENTE)
   datos           Json
   /// Sube en 1 con cada escritura de `datos`.
-  version         Int            @default(1)
+  version         Int             @default(1)
   /// Última versión cuyo resumen Telegram confirmó haber recibido. Null = nunca se mostró.
-  versionMostrada Int?           @map("version_mostrada")
+  versionMostrada Int?            @map("version_mostrada")
   /// Id de Telegram del usuario que pulsó "✅ Aprobar" (4.4 §3.5). Dato personal: nunca va a los logs.
-  aprobadoPor     BigInt?        @map("aprobado_por")
+  aprobadoPor     BigInt?         @map("aprobado_por")
   /// Fecha y hora exacta de la aprobación (actualizadoEn cambia con cualquier escritura).
-  aprobadoEn      DateTime?      @map("aprobado_en") @db.Timestamptz
-  creadoEn        DateTime       @default(now()) @map("creado_en") @db.Timestamptz
-  actualizadoEn   DateTime       @updatedAt @map("actualizado_en") @db.Timestamptz
+  aprobadoEn      DateTime?       @map("aprobado_en") @db.Timestamptz
+  /// A dónde va la venta, fijado al aprobar y para siempre (null mientras está PENDIENTE).
+  destinoFactura  DestinoFactura? @map("destino_factura")
+  creadoEn        DateTime        @default(now()) @map("creado_en") @db.Timestamptz
+  actualizadoEn   DateTime        @updatedAt @map("actualizado_en") @db.Timestamptz
   /// La emisión de este borrador, si ya se aprobó (a lo sumo una: `Emision.borradorId` es único).
   emision         Emision?
 
   @@unique([chatId], where: raw("estado = 'PENDIENTE'"), map: "borradores_chat_id_pendiente_key")
   @@index([chatId, estado])
   @@map("borradores")
+}
+
+/// A dónde va una venta aprobada (decisiones de Gabriel del 2026-11-12, plan de la fase 5 §4).
+/// Se fija al aprobar y no cambia nunca: solo PROVEEDOR puede tener emisión.
+enum DestinoFactura {
+  /// Se emite con el proveedor (consumidor final, con token válido).
+  PROVEEDOR
+  /// No había token válido al aprobar: se factura a mano y nunca se emite después (duplicaría).
+  MANUAL
+  /// Con NIT o cédula: el bot todavía no emite a nombre de alguien (paso 7). No se factura.
+  SIN_FACTURA
 }
 
 /// Dónde va una emisión (docs/planes/fase-5-alegra.md §4). Ver el modelo Emision.
@@ -105,30 +118,37 @@ enum EstadoDian {
 /// externo se guarda una vez; EMITIDA y CANCELADA son finales; solo nace de un borrador APROBADO; y
 /// un borrador que ya no está PENDIENTE no cambia. Las prueba `emision-restricciones.int-spec.ts`.
 model Emision {
-  id              String               @id @default(uuid(7)) @db.Uuid
+  id                    String               @id @default(uuid(7)) @db.Uuid
   /// Un borrador, una emisión. Restrict: no se puede borrar un borrador que ya tiene emisión.
-  borradorId      String               @unique @map("borrador_id") @db.Uuid
-  borrador        Borrador             @relation(fields: [borradorId], references: [id], onDelete: Restrict, onUpdate: Restrict)
-  proveedor       ProveedorFacturacion
+  borradorId            String               @unique @map("borrador_id") @db.Uuid
+  borrador              Borrador             @relation(fields: [borradorId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  proveedor             ProveedorFacturacion
   /// Id de la cuenta (compañía) del proveedor con la que nació. Antes de timbrar se exige que sea la
   /// cuenta del token actual: una fila de la cuenta de prueba nunca se timbra en la real.
-  cuentaProveedor String               @map("cuenta_proveedor")
-  modo            ModoEmision
-  estado          EstadoEmision        @default(PENDIENTE)
+  cuentaProveedor       String               @map("cuenta_proveedor")
+  modo                  ModoEmision
+  estado                EstadoEmision        @default(PENDIENTE)
   /// Fecha de la factura que se envía (día de Colombia), fijada al nacer: la reconciliación busca
   /// por esta fecha aunque se reintente otro día.
-  fechaFactura    DateTime             @map("fecha_factura") @db.Date
+  fechaFactura          DateTime             @map("fecha_factura") @db.Date
   /// Id de la factura en el proveedor (texto: Alegra pasa a UUID). Null hasta crear el borrador.
-  idExterno       String?              @map("id_externo")
+  idExterno             String?              @map("id_externo")
   /// Número de la factura (con prefijo), al timbrar.
-  numero          String?
-  cufe            String?
-  estadoDian      EstadoDian?          @map("estado_dian")
+  numero                String?
+  cufe                  String?
+  estadoDian            EstadoDian?          @map("estado_dian")
   /// Código del último error (p. ej. "http_401", "alegra_3226"). Nunca texto con datos personales.
-  codigoError     String?              @map("codigo_error")
-  creadaEn        DateTime             @default(now()) @map("creada_en") @db.Timestamptz
-  actualizadaEn   DateTime             @updatedAt @map("actualizada_en") @db.Timestamptz
-  emitidaEn       DateTime?            @map("emitida_en") @db.Timestamptz
+  codigoError           String?              @map("codigo_error")
+  creadaEn              DateTime             @default(now()) @map("creada_en") @db.Timestamptz
+  actualizadaEn         DateTime             @updatedAt @map("actualizada_en") @db.Timestamptz
+  emitidaEn             DateTime?            @map("emitida_en") @db.Timestamptz
+  /// Quién confirmó con el botón "No existe en Alegra" (DESCONOCIDO → NO_CREADA) y cuándo.
+  /// Id de Telegram: dato personal, nunca va a los logs.
+  noExisteConfirmadoPor BigInt?              @map("no_existe_confirmado_por")
+  noExisteConfirmadoEn  DateTime?            @map("no_existe_confirmado_en") @db.Timestamptz
+  /// Quién eligió "Ya la facturé a mano" (PENDIENTE o NO_CREADA → CANCELADA) y cuándo. Dato personal.
+  canceladaPor          BigInt?              @map("cancelada_por")
+  canceladaEn           DateTime?            @map("cancelada_en") @db.Timestamptz
 
   /// Una factura del proveedor pertenece a una sola emisión (la reconciliación no puede adoptarla
   /// dos veces). Los NULL no chocan entre sí en PostgreSQL.

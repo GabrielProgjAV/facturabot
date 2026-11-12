@@ -19,10 +19,25 @@ async function crearBorrador(
   chatId: bigint,
   estado: 'PENDIENTE' | 'APROBADO' | 'CANCELADO' = 'PENDIENTE',
 ) {
+  // Todo borrador nace PENDIENTE (trigger borradores_nacer_pendiente); los demás estados se
+  // alcanzan con UPDATE, como en el bot.
   const fila = await db.borrador.create({
-    data: { chatId, estado, datos: {} },
+    data: { chatId, datos: {} },
   });
-  return fila;
+  if (estado === 'PENDIENTE') return fila;
+  return db.borrador.update({
+    where: { id: fila.id },
+    data:
+      estado === 'APROBADO'
+        ? {
+            estado,
+            versionMostrada: fila.version,
+            aprobadoPor: 1n,
+            aprobadoEn: new Date(),
+            destinoFactura: 'MANUAL',
+          }
+        : { estado },
+  });
 }
 
 beforeAll(async () => {
@@ -69,11 +84,10 @@ describe('índice único parcial: a lo sumo un PENDIENTE por chat', () => {
   });
 
   it('acepta APROBADO y CANCELADO del mismo chat junto a su PENDIENTE', async () => {
-    await crearBorrador(CHAT_A);
-
     await expect(crearBorrador(CHAT_A, 'APROBADO')).resolves.toBeDefined();
     await expect(crearBorrador(CHAT_A, 'CANCELADO')).resolves.toBeDefined();
     await expect(crearBorrador(CHAT_A, 'APROBADO')).resolves.toBeDefined();
+    await expect(crearBorrador(CHAT_A)).resolves.toBeDefined();
   });
 
   it('un borrador nuevo empieza en version 1 y sin versión mostrada', async () => {
