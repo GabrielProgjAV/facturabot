@@ -61,3 +61,54 @@ describe('validateEnv', () => {
     expect(() => validateEnv({ ...envValido, PORT: 'abc' })).toThrow(/PORT/);
   });
 });
+
+describe('validateEnv: Alegra', () => {
+  it('sin variables de Alegra: sin token, URL oficial y emisión apagada', () => {
+    const env = validateEnv(envValido);
+
+    expect(env.ALEGRA_TOKEN).toBe('');
+    expect(env.ALEGRA_URL).toBe('https://api.alegra.com/api/v1');
+    expect(env.ALEGRA_EMITIR).toBe(false);
+  });
+
+  it.each([
+    ['true', true],
+    ['false', false],
+    ['0', false],
+  ])('ALEGRA_EMITIR="%s" → %s', (valor, esperado) => {
+    expect(
+      validateEnv({ ...envValido, ALEGRA_EMITIR: valor }).ALEGRA_EMITIR,
+    ).toBe(esperado);
+  });
+
+  it('ALEGRA_EMITIR con otro texto falla (no se adivina)', () => {
+    expect(() => validateEnv({ ...envValido, ALEGRA_EMITIR: 'si' })).toThrow(
+      /ALEGRA_EMITIR/,
+    );
+  });
+
+  it('acepta un token con forma de JWT (ficticio)', () => {
+    expect(
+      validateEnv({ ...envValido, ALEGRA_TOKEN: ' aaa.bbb.ccc ' }).ALEGRA_TOKEN,
+    ).toBe('aaa.bbb.ccc');
+  });
+
+  it('un token sin forma de JWT falla sin mostrarlo', () => {
+    const error = (() => {
+      try {
+        validateEnv({ ...envValido, ALEGRA_TOKEN: 'usuario:secreto123' });
+      } catch (e) {
+        return e as Error;
+      }
+    })();
+
+    expect(error?.message).toContain('ALEGRA_TOKEN');
+    expect(error?.message).not.toContain('secreto123');
+  });
+
+  it('ALEGRA_URL sin https falla: el token viaja en cada pedido', () => {
+    expect(() =>
+      validateEnv({ ...envValido, ALEGRA_URL: 'http://api.alegra.com/api/v1' }),
+    ).toThrow(/ALEGRA_URL/);
+  });
+});

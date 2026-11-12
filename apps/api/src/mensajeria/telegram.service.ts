@@ -1,3 +1,4 @@
+import { AvisoTokenService } from '../emision/alegra/aviso-token.service.js';
 import { setTimeout as esperar } from 'node:timers/promises';
 import {
   Injectable,
@@ -113,6 +114,7 @@ export class TelegramService
     private readonly conversacion: ConversacionService,
     private readonly transcriptor: TranscriptorService,
     private readonly cola: ColaMensajesService,
+    private readonly avisoToken: AvisoTokenService,
   ) {
     this.token = config.get('TELEGRAM_BOT_TOKEN', { infer: true });
     this.bot = new Bot(this.token);
@@ -358,6 +360,7 @@ export class TelegramService
       enviar: (chatId, texto, boton) => this.enviar(chatId, texto, boton),
       quitarBoton: (chatId, messageId) => this.quitarBoton(chatId, messageId),
       esperar: (ms) => esperar(ms),
+      avisoDelDia: () => this.avisoToken.avisoDelDia(),
       logger: this.logger,
     };
   }

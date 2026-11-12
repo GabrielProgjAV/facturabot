@@ -1,3 +1,4 @@
+import type { AvisoTokenService } from '../emision/alegra/aviso-token.service.js';
 import { Logger } from '@nestjs/common';
 import type { ConfigService } from '@nestjs/config';
 import type { Env } from '../config/env.schema.js';
@@ -44,6 +45,7 @@ function crear() {
     conversacion as unknown as ConversacionService,
     {} as TranscriptorService,
     cola as unknown as ColaMensajesService,
+    { avisoDelDia: () => null } as unknown as AvisoTokenService,
   );
   const responder = vi.fn().mockResolvedValue(undefined);
   return { servicio, conversacion, cola, responder };

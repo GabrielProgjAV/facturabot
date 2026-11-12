@@ -8,6 +8,13 @@ los ajustes del 2026-10-28 de `docs/prompts/pivote-formalizacion.md` (fase 5 = A
 de movimientos; el "Estado y plan" de CLAUDE.md todavía dice "6 Alegra" y se corrige al cerrar). Datos
 de ejemplo: ficticios. Siigo **no** se construye.
 
+**Cambio de contexto (Gabriel, 2026-11-12):** la tienda va a cancelar Alegra y **el proveedor final
+del piloto será probablemente Siigo**. Se sigue con Alegra para construir y probar la emisión contra
+una API real (la cuenta de prueba vence alrededor del 21 de noviembre). Por eso el adaptador de
+Alegra es **mínimo** (consumidor final, crear borrador, timbrar y consultar); todo lo genérico
+(puerto, estados, reconciliación, cola) se separa para reusarlo con Siigo; y la prioridad es llegar
+al paso 6.
+
 ## 1. Objetivo
 
 Un borrador aprobado con el botón produce **como máximo una** factura en Alegra, y el usuario recibe
@@ -25,7 +32,12 @@ número, CUFE y PDF. En desarrollo solo se crean **borradores** en la cuenta de 
   `Authorization: Bearer` (probado el 2026-11-06 contra `api.alegra.com/api/v1`; no hace falta
   `ALEGRA_USUARIO`). El JWT **vence** (el de prueba, a los 16 días) y trae dentro datos del usuario y
   una `api_key`: se trata entero como secreto y nunca se decodifica en los logs.
-- **Vencimiento:** al arrancar, el código lee solo el campo `exp` del token (sin imprimir nada más).
+- **Cuenta (`emisiones.cuenta_proveedor`)** (decisión de Gabriel, 2026-11-12): el campo `org` del
+  JWT, un UUID por organización. `GET /company` no trae un id, solo el NIT de la empresa, que podría
+  coincidir entre la cuenta de prueba y la real. **`org` no está documentado por Alegra** (pregunta
+  11 del §10). Si el token no trae `org` o no tiene forma de UUID, el bot se niega a emitir. Nunca se
+  registra completo: al arrancar, el log muestra solo sus últimos 4 caracteres.
+- **Vencimiento:** al arrancar, el código lee solo los campos `exp` y `org` del token (sin imprimir nada más).
   Si faltan menos de 5 días, el log lo avisa y el bot se lo dice al usuario autorizado una vez al día;
   si ya venció, la emisión queda apagada con un aviso claro (los borradores siguen funcionando). Un
   401 de Alegra se trata como NO_CREADA "token vencido o revocado".
@@ -122,6 +134,18 @@ definitivo al crearlo).
     (superusuario en la imagen oficial), que puede apagar los triggers. Separar un rol para
     migraciones y otro para la app, sin DELETE ni TRUNCATE. Decide Gabriel.
   - Prueba de integración del paso 6: nunca se timbra una fila de otra cuenta ni de otro modo.
+- **Para el paso 6, de la revisión de seguridad del paso 5 (PR del adaptador):**
+  - `ErrorProveedor.definitivo` vale **solo en `crearBorrador`**. Ningún error de `timbrar` o
+    `consultar` devuelve una emisión con `id_externo` a PENDIENTE ni a NO_CREADA.
+  - Agregar al puerto `buscarPorReferencia` (todas las páginas, Zod, comparar `observations` de
+    nuestro lado) para reconciliar DESCONOCIDO, y reconciliar también antes de un reintento manual
+    del paso 1.
+  - Registrar los errores solo con `describirError` (nunca el objeto entero, que trae `cause`).
+- **Antes del token de producción:** comprobar que el `org` del token de prueba y el de la cuenta
+  real son distintos (comparando solo sus sufijos), y que en producción `ALEGRA_URL` sea
+  `api.alegra.com`.
+- **Límite conocido:** el aviso diario del token se marca antes de enviar; si ese envío falla, ese
+  día no se repite.
 - **Paso a CREANDO_BORRADOR atómico y guardado antes del POST:** `UPDATE … WHERE estado =
   'PENDIENTE'`; si no cambia ninguna fila, el trabajo se aborta. `observations =
   "facturabot:<emisionId>"`. Al arrancar, un candado de una sola instancia (`pg_try_advisory_lock`)
@@ -232,6 +256,8 @@ un proveedor falso (201, 400 con y sin factura, timeout, reinicio).
    emitir un JWT de Integraciones con vencimiento más largo, o el token clásico (Basic) sigue
    vigente y sin vencimiento? (La página de autenticación de la API solo documenta Basic.)
 10. (Para la fase 12, no urge) ¿Qué autorización exige un servicio multiempresa sobre la API?
+11. ¿Cuál es el identificador estable de la cuenta o empresa para la API? (Hoy se usa el campo
+    `org` del JWT, que no está documentado.)
 
 Ya respondida (2026-11-06): la tienda tiene el plan **Contabilidad Emprendedor**, que según la tabla
 de precios incluye la API. Si aun así Alegra responde 402, se pregunta a soporte.
@@ -267,3 +293,35 @@ reconciliación del §4; el timbrado repetido no duplica); huecos de numeración
 se timbran (pregunta 7); CUFE y estados sin confirmar hasta hablar con soporte; choque Res. 202 frente a los
 contactos de Alegra (mitigado: solo consumidor final al principio); un solo PC sin respaldo
 (mitigado con los requisitos del §9 y el plan B manual).
+
+## 13. Bitácora de fricción
+
+Mediciones de las pruebas manuales que no se arreglan en esta fase. La optimización de latencia
+(opción D de la 4.4 §14.2: la IA devuelve solo los cambios) va **después de Alegra** (Gabriel,
+2026-11-11).
+
+**2026-11-11, prueba manual en `main` (con los PR #10 y #11), 7 mensajes de texto.** Datos
+ficticios. El modelo estaba precargado (`qwen2.5:7b`, `keep_alive` de 30 min, 12 de 29 capas en la
+GPU, contexto de 4096) y no hubo recarga entre mensajes. Durante la prueba no corría ningún test ni
+otro proceso del agente.
+
+| # | Mensaje | Trabajo | De eso, Ollama (`/api/chat`) | Tokens del pedido |
+|---|---|---|---|---|
+| 1 | cancelar | 0,4 s | — | — |
+| 2 | primer borrador (sin NIT) | **77,6 s** | **70 s** | 450 |
+| 3 | NIT sin DV | 9,6 s | 9,2 s | 656 |
+| 4 | NIT completo | 8,4 s | 8,0 s | 666 |
+| 5 | cancelar | 0,3 s | — | — |
+| 6 | cédula de 3 dígitos | 6,6 s | 6,1 s | 452 |
+| 7 | cancelar | 0,3 s | — | — |
+
+- Lo lento fue el **primer** pedido de la sesión: 70 s en Ollama, frente a 6 a 9 s de los
+  siguientes, con un pedido de tamaño parecido (450 frente a 452 tokens del mensaje 6). La
+  precarga solo carga los pesos; la primera inferencia real paga además el arranque del cálculo en
+  la GPU y la preparación de la gramática del formato JSON. Es una hipótesis: no se midió por
+  separado.
+- Fuera de Ollama, el primer trabajo tardó unos 7,6 s más (los demás, menos de 0,5 s): primera
+  conexión a la base y primer envío a Telegram de la sesión. También hipótesis.
+- Mitigación posible, sin cambiar código del bot: que la precarga del arranque diario haga una
+  inferencia corta de verdad con el mismo formato, no solo la carga. Se decide junto con la
+  opción D.
