@@ -134,6 +134,18 @@ definitivo al crearlo).
     (superusuario en la imagen oficial), que puede apagar los triggers. Separar un rol para
     migraciones y otro para la app, sin DELETE ni TRUNCATE. Decide Gabriel.
   - Prueba de integración del paso 6: nunca se timbra una fila de otra cuenta ni de otro modo.
+- **Para el paso 6, de la revisión de seguridad del paso 5 (PR del adaptador):**
+  - `ErrorProveedor.definitivo` vale **solo en `crearBorrador`**. Ningún error de `timbrar` o
+    `consultar` devuelve una emisión con `id_externo` a PENDIENTE ni a NO_CREADA.
+  - Agregar al puerto `buscarPorReferencia` (todas las páginas, Zod, comparar `observations` de
+    nuestro lado) para reconciliar DESCONOCIDO, y reconciliar también antes de un reintento manual
+    del paso 1.
+  - Registrar los errores solo con `describirError` (nunca el objeto entero, que trae `cause`).
+- **Antes del token de producción:** comprobar que el `org` del token de prueba y el de la cuenta
+  real son distintos (comparando solo sus sufijos), y que en producción `ALEGRA_URL` sea
+  `api.alegra.com`.
+- **Límite conocido:** el aviso diario del token se marca antes de enviar; si ese envío falla, ese
+  día no se repite.
 - **Paso a CREANDO_BORRADOR atómico y guardado antes del POST:** `UPDATE … WHERE estado =
   'PENDIENTE'`; si no cambia ninguna fila, el trabajo se aborta. `observations =
   "facturabot:<emisionId>"`. Al arrancar, un candado de una sola instancia (`pg_try_advisory_lock`)

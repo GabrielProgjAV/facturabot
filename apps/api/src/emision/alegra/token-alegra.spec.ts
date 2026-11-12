@@ -91,3 +91,14 @@ describe('sufijoCuenta', () => {
     expect(sufijoCuenta(ORG_FICTICIA)).toBe('…0001');
   });
 });
+
+describe('leerTokenAlegra: exp absurdo', () => {
+  it('un exp que no da una fecha válida: vence null (sin_vencimiento, no se emite)', () => {
+    const token = tokenFicticio({ exp: 1e20 });
+
+    expect(leerTokenAlegra(token).vence).toBeNull();
+    expect(estadoTokenAlegra(token, AHORA)).toEqual({
+      estado: 'sin_vencimiento',
+    });
+  });
+});

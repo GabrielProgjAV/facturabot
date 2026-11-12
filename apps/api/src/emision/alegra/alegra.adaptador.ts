@@ -30,6 +30,10 @@ const PRODUCTO_GENERICO = 'Pinturas varias';
 /** Código de Alegra al timbrar una factura ya emitida (documentación de POST /invoices/stamp). */
 const CODIGO_YA_EMITIDA = 3226;
 const TIEMPO_LIMITE_MS = 30_000;
+/** Tope del cuerpo de una respuesta: más que esto no es una respuesta normal de Alegra. */
+const MAXIMO_RESPUESTA_BYTES = 1_000_000;
+/** Tope de la descripción de una línea (un borrador aceptó 20.000; el límite al timbrar, 🔴). */
+const MAXIMO_DESCRIPCION = 1000;
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
@@ -81,6 +85,27 @@ const facturaSchema = z.object({
     .nullish(),
 });
 
+/** Lo que se le pide al adaptador, validado al entrar (en el paso 6 sale de la BD). */
+const facturaEntradaSchema = z.object({
+  referencia: z.string().regex(/^facturabot:[0-9a-f-]{36}$/),
+  fecha: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  cliente: z.object({ tipo: z.literal('consumidor_final') }),
+  lineas: z
+    .array(
+      z.object({
+        descripcion: z.string().trim().min(1).max(MAXIMO_DESCRIPCION),
+        valor: z.number().int().positive().max(1_000_000_000_000),
+      }),
+    )
+    .min(1),
+});
+
+/** Un error de Alegra con la forma conocida, sin id de factura: no se creó nada. */
+const errorAlegraSchema = z
+  .object({ code: z.unknown().optional(), message: z.unknown().optional() })
+  .refine((e) => e.code !== undefined || e.message !== undefined)
+  .refine((e) => !('id' in e));
+
 const impuestosSchema = z.array(
   z.object({
     id: idSchema,
@@ -122,19 +147,27 @@ const ESTADOS_DIAN: Record<string, EstadoDian> = {
 };
 
 function aFactura(datos: z.infer<typeof facturaSchema>): FacturaProveedor {
-  // Una factura que ya no es borrador ni anulada está timbrada (🔴 a confirmar con soporte).
-  const timbrada = datos.status !== 'draft' && datos.status !== 'void';
+  const cufe = datos.stamp?.cufe ?? null;
+  const estadoDian = ESTADOS_DIAN[datos.stamp?.legalStatus ?? ''] ?? null;
+  const borrador = datos.status === 'draft';
+  // Timbrada solo si Alegra lo confirma con CUFE o estado ante la DIAN (🔴 nombres sin confirmar):
+  // un estado distinto de borrador sin esos datos es incierto, no "emitida".
+  const timbrada =
+    !borrador &&
+    datos.status !== 'void' &&
+    (cufe !== null || estadoDian !== null);
   const numero = datos.numberTemplate?.number;
   return {
     idExterno: datos.id,
     referencia: datos.observations?.trim() || null,
+    borrador,
     timbrada,
     numero:
       timbrada && numero !== null && numero !== undefined
         ? `${datos.numberTemplate?.prefix ?? ''}${numero}`
         : null,
-    cufe: datos.stamp?.cufe ?? null,
-    estadoDian: ESTADOS_DIAN[datos.stamp?.legalStatus ?? ''] ?? null,
+    cufe,
+    estadoDian,
   };
 }
 
@@ -205,7 +238,7 @@ export class AlegraAdaptador implements ProveedorFacturacion {
   async crearBorrador(
     factura: FacturaParaProveedor,
   ): Promise<FacturaProveedor> {
-    if (factura.cliente.tipo !== 'consumidor_final') {
+    if (!facturaEntradaSchema.safeParse(factura).success) {
       throw new ErrorProveedor('rechazo_validacion');
     }
     const { iva, producto, cliente } = await this.leerRecursos();
@@ -226,12 +259,27 @@ export class AlegraAdaptador implements ProveedorFacturacion {
       observations: factura.referencia,
     };
     const respuesta = await this.pedir('POST', '/invoices', cuerpo);
-    // Un 400 que trae la factura creada también es un borrador creado (§4).
+    let creada: FacturaProveedor;
     if (respuesta.status === 400) {
-      const creada = facturaSchema.safeParse(respuesta.cuerpo);
-      if (creada.success) return aFactura(creada.data);
+      // Un 400 que trae la factura creada también es un borrador creado (§4). Solo es "no se creó"
+      // (definitivo) si el cuerpo es un error conocido sin id; si no se pudo leer, es incierto.
+      const conFactura = facturaSchema.safeParse(respuesta.cuerpo);
+      if (!conFactura.success) {
+        throw new ErrorProveedor(
+          errorAlegraSchema.safeParse(respuesta.cuerpo).success
+            ? 'rechazo_validacion'
+            : 'respuesta_invalida',
+        );
+      }
+      creada = aFactura(conFactura.data);
+    } else {
+      creada = aFactura(this.validar(respuesta, facturaSchema));
     }
-    return aFactura(this.validar(respuesta, facturaSchema));
+    // Tiene que ser nuestro borrador: si llegó timbrada o con otra referencia, algo no cuadra.
+    if (!creada.borrador || creada.referencia !== factura.referencia) {
+      throw new ErrorProveedor('respuesta_invalida');
+    }
+    return creada;
   }
 
   async timbrar(
@@ -247,6 +295,8 @@ export class AlegraAdaptador implements ProveedorFacturacion {
       throw new ErrorProveedor('factura_ajena');
     }
     if (actual.timbrada) return { resultado: 'ya_timbrada' };
+    // Ni borrador ni timbrada confirmada: no se sabe en qué estado está, no se pide el stamp.
+    if (!actual.borrador) throw new ErrorProveedor('respuesta_invalida');
     const respuesta = await this.pedir('POST', '/invoices/stamp', {
       ids: [id],
     });
@@ -265,11 +315,12 @@ export class AlegraAdaptador implements ProveedorFacturacion {
     if (Number(nuestra.code) === CODIGO_YA_EMITIDA) {
       return { resultado: 'ya_timbrada' };
     }
-    const codigo = String(nuestra.code ?? 'sin_codigo').replace(/\W/g, '');
-    return {
-      resultado: 'rechazada',
-      codigo: `alegra_${codigo || 'sin_codigo'}`,
-    };
+    // Rechazada solo con un código de error explícito; sin success ni código, pudo timbrarse.
+    const codigo = String(nuestra.code ?? '')
+      .replace(/\W/g, '')
+      .slice(0, 32);
+    if (codigo === '') throw new ErrorProveedor('respuesta_invalida');
+    return { resultado: 'rechazada', codigo: `alegra_${codigo}` };
   }
 
   async consultar(
@@ -374,12 +425,41 @@ export class AlegraAdaptador implements ProveedorFacturacion {
         { cause: err },
       );
     }
+    const texto = await leerConTope(respuesta);
     let json: unknown = null;
     try {
-      json = await respuesta.json();
+      json = JSON.parse(texto);
     } catch {
       // Sin cuerpo JSON: cuenta el código HTTP (y Zod lo rechaza si era 2xx).
     }
     return { status: respuesta.status, cuerpo: json };
   }
+}
+
+/**
+ * El cuerpo como texto, contando los bytes mientras llegan (con o sin Content-Length): más de
+ * MAXIMO_RESPUESTA_BYTES es respuesta_invalida y se deja de leer. Un corte (p. ej. el tiempo
+ * límite) a mitad del cuerpo deja un texto vacío, que Zod rechaza si era 2xx.
+ */
+async function leerConTope(respuesta: Response): Promise<string> {
+  if (!respuesta.body) return '';
+  const lector = respuesta.body.getReader();
+  const partes: Uint8Array[] = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const { done, value } = await lector.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > MAXIMO_RESPUESTA_BYTES) {
+        await lector.cancel();
+        throw new ErrorProveedor('respuesta_invalida');
+      }
+      partes.push(value);
+    }
+  } catch (err) {
+    if (err instanceof ErrorProveedor) throw err;
+    return '';
+  }
+  return Buffer.concat(partes).toString('utf8');
 }

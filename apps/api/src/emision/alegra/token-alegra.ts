@@ -46,8 +46,15 @@ export function leerTokenAlegra(token: string): DatosTokenAlegra {
   if (!campos.success) return { org: null, vence: null };
   return {
     org: campos.data.org ?? null,
-    vence: campos.data.exp ? new Date(campos.data.exp * 1000) : null,
+    vence: vencimiento(campos.data.exp),
   };
+}
+
+/** La fecha de `exp`, o null si no hay o no es una fecha válida (p. ej. un número absurdo). */
+function vencimiento(exp: number | undefined): Date | null {
+  if (exp === undefined) return null;
+  const fecha = new Date(exp * 1000);
+  return Number.isFinite(fecha.getTime()) ? fecha : null;
 }
 
 export type EstadoTokenAlegra =

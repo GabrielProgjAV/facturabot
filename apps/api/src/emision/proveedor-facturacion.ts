@@ -42,7 +42,12 @@ export interface FacturaProveedor {
   idExterno: string;
   /** La referencia que guardamos al crearla, o null si no tiene (no es nuestra). */
   referencia: string | null;
-  /** true si ya está timbrada ante la DIAN. */
+  /** true si sigue en borrador (no timbrada). */
+  borrador: boolean;
+  /**
+   * true solo si el proveedor confirma el timbrado (trae CUFE o estado ante la DIAN). Si no es
+   * borrador ni está confirmada, el estado es incierto: no se da por emitida.
+   */
   timbrada: boolean;
   /** Número con prefijo, si ya está timbrada. */
   numero: string | null;
@@ -67,9 +72,13 @@ export type ResultadoTimbrado =
   | { resultado: 'rechazada'; codigo: string };
 
 /**
- * Por qué falló una operación. `definitivo`: seguro que no se creó ni timbró nada (el servicio
- * puede marcar NO_CREADA). `incierto`: pudo haber llegado (timeout, red, 5xx, respuesta rara):
- * se reconcilia, nunca se repite solo (§4).
+ * Por qué falló una operación.
+ * - `definitivo` **solo en `crearBorrador`**: seguro que no se creó nada (el servicio puede marcar
+ *   NO_CREADA y permitir un reintento explícito).
+ * - `incierto`: pudo haber llegado (timeout, red, 5xx, respuesta rara): se reconcilia, nunca se
+ *   repite solo (§4).
+ * En `timbrar` y `consultar` la factura ya existe en el proveedor: **ningún** error, definitivo o
+ * no, permite volver al paso 1 (PENDIENTE o NO_CREADA); la emisión conserva su id externo.
  */
 export const CATEGORIAS_ERROR_PROVEEDOR = {
   // Configuración y guardas: nunca se llamó al proveedor.

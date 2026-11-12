@@ -130,6 +130,7 @@ describe('AlegraAdaptador.crearBorrador', () => {
     expect(factura).toEqual({
       idExterno: '7',
       referencia: REFERENCIA,
+      borrador: true,
       timbrada: false,
       numero: null,
       cufe: null,
@@ -183,7 +184,7 @@ describe('AlegraAdaptador.crearBorrador', () => {
   it.each([
     [
       400,
-      { code: 1, message: 'datos de Ana 52111222' },
+      { code: 1, message: 'datos de Ana 52111222' }, // ficticio
       'rechazo_validacion',
       true,
     ], // ficticios
@@ -340,7 +341,10 @@ describe('AlegraAdaptador.timbrar', () => {
   );
 
   it('ya timbrada al consultarla: no pide el stamp otra vez', async () => {
-    conBorrador({ status: 'open' });
+    conBorrador({
+      status: 'open',
+      stamp: { legalStatus: 'STAMPED_AND_ACCEPTED' },
+    });
 
     await expect(adaptador().timbrar(REF, 'TIMBRAR')).resolves.toEqual({
       resultado: 'ya_timbrada',
@@ -406,6 +410,7 @@ describe('AlegraAdaptador.consultar', () => {
     await expect(adaptador().consultar(REF)).resolves.toEqual({
       idExterno: '7',
       referencia: REFERENCIA,
+      borrador: false,
       timbrada: true,
       numero: 'FE12',
       cufe: 'cufe-ficticio',
@@ -460,5 +465,125 @@ describe('AlegraAdaptador.consultar', () => {
 
     expect(error.categoria).toBe('no_encontrada');
     expect(error.definitivo).toBe(true);
+  });
+});
+
+describe('AlegraAdaptador: revisión de seguridad del PR (clasificación sin duplicar)', () => {
+  it.each([
+    ['un 400 con cuerpo que no es JSON', { status: 400, crudo: '<html>' }],
+    [
+      'un 400 con un id de forma nueva',
+      { status: 400, cuerpo: { id: 'abc', status: 'draft' } },
+    ],
+    ['un 400 vacío', { status: 400, cuerpo: null }],
+  ])(
+    '%s al crear: respuesta_invalida (incierto, se reconcilia)',
+    async (_caso, respuesta) => {
+      alegra.conRecursos().responder('POST /invoices', respuesta);
+
+      const error = await errorDe(adaptador().crearBorrador(FACTURA));
+
+      expect(error.categoria).toBe('respuesta_invalida');
+      expect(error.definitivo).toBe(false);
+    },
+  );
+
+  it.each([
+    ['ya timbrada', borradorAlegra({ status: 'open' })],
+    [
+      'con otra referencia',
+      borradorAlegra({ observations: 'facturabot:otra' }),
+    ],
+  ])(
+    'crear devuelve una factura %s: respuesta_invalida',
+    async (_caso, cuerpo) => {
+      alegra.conRecursos().responder('POST /invoices', { status: 201, cuerpo });
+
+      expect(
+        (await errorDe(adaptador().crearBorrador(FACTURA))).categoria,
+      ).toBe('respuesta_invalida');
+    },
+  );
+
+  it.each([
+    ['fecha con otra forma', { fecha: '12/11/2026' }],
+    ['sin líneas', { lineas: [] }],
+    [
+      'un valor con decimales',
+      { lineas: [{ descripcion: 'vinilo', valor: 1.5 }] },
+    ],
+    ['una descripción vacía', { lineas: [{ descripcion: ' ', valor: 1 }] }],
+    [
+      'una descripción demasiado larga',
+      { lineas: [{ descripcion: 'x'.repeat(1001), valor: 1 }] },
+    ],
+    ['una referencia ajena', { referencia: 'otra' }],
+  ])(
+    'entrada con %s: rechazo_validacion sin llamar a Alegra',
+    async (_caso, cambio) => {
+      alegra.conRecursos();
+
+      const error = await errorDe(
+        adaptador().crearBorrador({
+          ...FACTURA,
+          ...cambio,
+        } as FacturaParaProveedor),
+      );
+
+      expect(error.categoria).toBe('rechazo_validacion');
+      expect(alegra.pedidos).toHaveLength(0);
+    },
+  );
+
+  it('timbrar una factura "open" sin CUFE ni estado DIAN: incierta, no pide el stamp', async () => {
+    alegra.responder('GET /invoices/7', {
+      status: 200,
+      cuerpo: borradorAlegra({ status: 'open' }),
+    });
+
+    const error = await errorDe(adaptador().timbrar(REF, 'TIMBRAR'));
+
+    expect(error.categoria).toBe('respuesta_invalida');
+    expect(alegra.pedidosA('POST /invoices/stamp')).toHaveLength(0);
+  });
+
+  it('el stamp responde nuestro id sin success ni código: respuesta_invalida (pudo timbrarse)', async () => {
+    alegra
+      .responder('GET /invoices/7', { status: 200, cuerpo: borradorAlegra() })
+      .responder('POST /invoices/stamp', {
+        status: 200,
+        cuerpo: { data: [{ id: '7' }] },
+      });
+
+    const error = await errorDe(adaptador().timbrar(REF, 'TIMBRAR'));
+
+    expect(error.categoria).toBe('respuesta_invalida');
+    expect(error.definitivo).toBe(false);
+  });
+
+  it('el código de rechazo se recorta a 32 caracteres', async () => {
+    alegra
+      .responder('GET /invoices/7', { status: 200, cuerpo: borradorAlegra() })
+      .responder('POST /invoices/stamp', {
+        status: 400,
+        cuerpo: { data: [{ id: '7', code: '9'.repeat(100) }] },
+      });
+
+    await expect(adaptador().timbrar(REF, 'TIMBRAR')).resolves.toEqual({
+      resultado: 'rechazada',
+      codigo: `alegra_${'9'.repeat(32)}`,
+    });
+  });
+
+  it('una respuesta de más de 1 MB: respuesta_invalida, sin leerla', async () => {
+    // Una factura válida, pero enorme: sin el tope, pasaría.
+    alegra.responder('GET /invoices/7', {
+      status: 200,
+      cuerpo: borradorAlegra({ observations: 'x'.repeat(1_000_001) }),
+    });
+
+    expect((await errorDe(adaptador().consultar(REF))).categoria).toBe(
+      'respuesta_invalida',
+    );
   });
 });
