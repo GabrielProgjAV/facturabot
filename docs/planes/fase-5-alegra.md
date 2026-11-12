@@ -8,6 +8,13 @@ los ajustes del 2026-10-28 de `docs/prompts/pivote-formalizacion.md` (fase 5 = A
 de movimientos; el "Estado y plan" de CLAUDE.md todavía dice "6 Alegra" y se corrige al cerrar). Datos
 de ejemplo: ficticios. Siigo **no** se construye.
 
+**Cambio de contexto (Gabriel, 2026-11-12):** la tienda va a cancelar Alegra y **el proveedor final
+del piloto será probablemente Siigo**. Se sigue con Alegra para construir y probar la emisión contra
+una API real (la cuenta de prueba vence alrededor del 21 de noviembre). Por eso el adaptador de
+Alegra es **mínimo** (consumidor final, crear borrador, timbrar y consultar); todo lo genérico
+(puerto, estados, reconciliación, cola) se separa para reusarlo con Siigo; y la prioridad es llegar
+al paso 6.
+
 ## 1. Objetivo
 
 Un borrador aprobado con el botón produce **como máximo una** factura en Alegra, y el usuario recibe
