@@ -1,4 +1,4 @@
-import type { AvisoTokenService } from '../emision/aviso-token.service.js';
+import type { AvisoTokenService } from '../emision/alegra/aviso-token.service.js';
 import { Logger } from '@nestjs/common';
 import type { ConfigService } from '@nestjs/config';
 import type { Env } from '../config/env.schema.js';

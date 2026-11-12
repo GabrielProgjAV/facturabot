@@ -1,4 +1,4 @@
-import { AvisoTokenService } from '../emision/aviso-token.service.js';
+import { AvisoTokenService } from '../emision/alegra/aviso-token.service.js';
 import { setTimeout as esperar } from 'node:timers/promises';
 import {
   Injectable,

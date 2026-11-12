@@ -7,7 +7,7 @@ export const ORG_FICTICIA = '00000000-0000-4000-8000-000000000001';
 export const OTRA_ORG_FICTICIA = '00000000-0000-4000-8000-000000000002';
 
 export function tokenFicticio(
-  campos: { org?: unknown; exp?: Date | unknown } = {},
+  campos: { org?: unknown; exp?: unknown } = {},
 ): string {
   const contenido: Record<string, unknown> = {
     org: 'org' in campos ? campos.org : ORG_FICTICIA,

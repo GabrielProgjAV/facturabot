@@ -1,7 +1,7 @@
 // Tokens y cuentas ficticios.
 import type { ConfigService } from '@nestjs/config';
-import type { Env } from '../config/env.schema.js';
-import { tokenFicticio } from './alegra/token-ficticio.spec-util.js';
+import type { Env } from '../../config/env.schema.js';
+import { tokenFicticio } from './token-ficticio.spec-util.js';
 import { AvisoTokenService } from './aviso-token.service.js';
 
 const DIA = 86_400_000;

@@ -4,12 +4,12 @@ import {
   type OnApplicationBootstrap,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import type { Env } from '../config/env.schema.js';
+import type { Env } from '../../config/env.schema.js';
 import {
   type EstadoTokenAlegra,
   estadoTokenAlegra,
   sufijoCuenta,
-} from './alegra/token-alegra.js';
+} from './token-alegra.js';
 
 const diaColombia = new Intl.DateTimeFormat('en-CA', {
   timeZone: 'America/Bogota',
