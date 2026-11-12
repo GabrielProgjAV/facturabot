@@ -167,6 +167,37 @@ definitivo al crearlo).
   - **Sin token válido** (falta, venció o no trae cuenta): no se crea emisión, el aviso sale
     **antes** del botón de aprobar, y ese borrador queda marcado **para siempre** como "facturar a
     mano": nunca se emite después, aunque vuelva el token (sería un duplicado).
+  - **NO_CREADA → CANCELADA** (Gabriel, 2026-11-12), con el mismo quién y cuándo de "Ya la facturé
+    a mano": si se facturó a mano, no puede quedar abierta la opción de reintentar.
+- **Cómo quedó en la migración `cerrar_emisiones`** (paso 6):
+  - `borradores.destino_factura` (`PROVEEDOR` / `MANUAL` / `SIN_FACTURA`) se fija al aprobar y
+    nunca cambia; solo `PROVEEDOR` puede tener emisión. `MANUAL` = "facturar a mano" (sin token
+    válido); `SIN_FACTURA` = borrador con NIT o cédula. Los 7 APROBADO viejos de la base de
+    desarrollo quedaron `MANUAL`.
+  - `emisiones.no_existe_confirmado_por/_en` ("No existe en Alegra") y `cancelada_por/_en` ("Ya la
+    facturé a mano"); sin ellos la base rechaza DESCONOCIDO → NO_CREADA y todo paso a CANCELADA.
+  - Transiciones permitidas: PENDIENTE → CREANDO_BORRADOR o CANCELADA; CREANDO_BORRADOR →
+    BORRADOR_CREADO, NO_CREADA o DESCONOCIDO; DESCONOCIDO → BORRADOR_CREADO o NO_CREADA;
+    BORRADOR_CREADO → TIMBRANDO o DESCONOCIDO; TIMBRANDO → EMITIDA o RECHAZADA; RECHAZADA →
+    TIMBRANDO o EMITIDA; NO_CREADA → PENDIENTE o CANCELADA. Quedarse en el mismo estado (para
+    completar número, CUFE o contar intentos) no es una transición.
+- **Borrador con NIT o cédula (propuesta del agente, reversible: textos y botones):** el resumen
+  dice antes de los botones que esa venta no se facturará desde el bot (por ahora solo consumidor
+  final) y que, si el cliente la necesita, se factura a mano. En lugar de "✅ Aprobar" lleva
+  "📝 Registrar sin factura", que cierra el borrador como APROBADO con destino `SIN_FACTURA` y sin
+  emisión. Nunca queda colgado bloqueando el chat: se cierra con ese botón, con "cancelar", o
+  corrigiéndolo a consumidor final (vuelve el "✅ Aprobar" normal); y si queda quieto más de 2 h, el
+  siguiente mensaje lo cancela (regla de la 4.4). El mismo botón con otro texto sirve para "facturar
+  a mano" (destino `MANUAL`).
+- **RECHAZADA → EMITIDA:** cuando una consulta (al arrancar o en los trabajos diferidos) encuentra
+  timbrada esa factura sin que el bot la haya vuelto a timbrar; por ejemplo, el humano corrigió el
+  dato en la web de Alegra y la timbró allí. Si es el bot el que reintenta, pasa por TIMBRANDO.
+- **TIMBRANDO tras un timeout:** la fila se queda en TIMBRANDO (no tiene salida a PENDIENTE,
+  NO_CREADA, DESCONOCIDO ni CANCELADA, porque ya tiene `id_externo` y puede estar timbrada). La
+  recupera el propio trabajo, que repite el paso 2 sobre el **mismo id** hasta 3 veces, y si se
+  acaban, el arranque siguiente. Cada intento hace primero `GET`: si ya está timbrada → EMITIDA; si
+  sigue en borrador → `stamp` otra vez (3226 = ya emitida → EMITIDA); un rechazo explícito →
+  RECHAZADA. Nunca vuelve al paso 1.
 - **Paso a CREANDO_BORRADOR atómico y guardado antes del POST:** `UPDATE … WHERE estado =
   'PENDIENTE'`; si no cambia ninguna fila, el trabajo se aborta. `observations =
   "facturabot:<emisionId>"`. Al arrancar, un candado de una sola instancia (`pg_try_advisory_lock`)
@@ -193,7 +224,8 @@ definitivo al crearlo).
   **3226** = ya estaba emitida → se consulta y queda EMITIDA. Si los intentos se acaban (o hay 401),
   queda en TIMBRANDO con aviso y se reintenta al arrancar.
 - **Al arrancar** (con el candado): PENDIENTE se reencola, salvo si lleva más de 2 h, que se pregunta
-  con botones "Emitir / Ya la facturé a mano" (plan B del §9; una PENDIENTE se puede cancelar);
+  con botones "Emitir / Ya la facturé a mano" (plan B del §9; una PENDIENTE o NO_CREADA se puede
+  cancelar);
   CREANDO_BORRADOR pasa a DESCONOCIDO y se reconcilia; BORRADOR_CREADO (solo modo real) y TIMBRANDO
   repiten el paso 2; EMITIDA con estado DIAN pendiente y RECHAZADA se vuelven a consultar.
 
@@ -240,6 +272,14 @@ tipo de sociedad. Quedan fuera (siguen anotados): Zod en Whisper, aviso "no lo r
 de voz para valores, el PR de `OLLAMA_MODELO_TEXTO`, y "sí sobre un borrador quieto", que ya no aplica
 porque "sí" no aprueba (se borra de CLAUDE.md). En vez del e2e: test de integración de la emisión con
 un proveedor falso (201, 400 con y sin factura, timeout, reinicio).
+
+**Para cuando se haga la excepción de anonimización (Ley 1581, §4):** la regla
+`borradores_aprobacion_completa_check` (todo APROBADO con quién y cuándo) quedó `NOT VALID`, porque
+6 borradores APROBADO viejos de la base de desarrollo no tienen `aprobado_por`. PostgreSQL revisa
+una regla `NOT VALID` en toda fila que se inserte **o se actualice**: anonimizar `datos` de esos 6
+es un `UPDATE` y lo va a rechazar, además del trigger que ya impide cambiar `datos` fuera de
+PENDIENTE. Se resuelve en ese momento (por ejemplo, completar quién y cuándo con un valor marcado
+como "anterior a la regla" y luego `VALIDATE CONSTRAINT`). Esos 6 son de pruebas con datos ficticios.
 
 ## 9. Fuera del código
 
@@ -348,3 +388,70 @@ otro proceso del agente.
 - Mitigación posible, sin cambiar código del bot: que la precarga del arranque diario haga una
   inferencia corta de verdad con el mismo formato, no solo la carga. Se decide junto con la
   opción D.
+
+### Traspaso del 2026-11-12 (paso 6, para la siguiente sesión)
+
+**Rama:** `feat/servicio-emision` (desde `main` con el PR #12), subida. Sin PR todavía.
+
+**Hecho (commits de la rama):**
+
+- `17edd7e` decisiones de Gabriel para el paso 6 (§4).
+- `b082cb2` base aparte para `pnpm test:int` (`facturacion_test`, recreada en cada corrida; la
+  guarda exige que el nombre termine en `_test`). Las pruebas ya no borran filas.
+- `cb82412` migración `cerrar_emisiones`, **aplicada a la base de desarrollo** con
+  `prisma migrate deploy` (7 migraciones; 7 APROBADO → `MANUAL`, 15 CANCELADO). Qué contiene: §4,
+  "Cómo quedó en la migración". 101 de 104 tests de integración en verde; `pnpm test`, lint,
+  Prettier y tipos en verde.
+- Este commit: plan con NO_CREADA → CANCELADA, el borrador con NIT, RECHAZADA → EMITIDA, la
+  recuperación de TIMBRANDO (§4) y el choque `NOT VALID` / anonimización (§8).
+
+**En rojo a propósito:** 3 tests de `conversacion.int-spec.ts` (aprobación por versión). Aprueban sin
+`destino_factura`; se arreglan con el punto 2 de abajo. El CI de un PR de esta rama fallará en
+`test:int` hasta entonces.
+
+**Falta del paso 6, en este orden (commit y push por cada cambio en verde):**
+
+1. Agregar a `REGLAS_BD` (`mensajeria/procesador-mensajes.ts`) las reglas nuevas:
+   `borradores_nacer_pendiente`, `borradores_aprobacion_coherente`,
+   `borradores_destino_solo_aprobado_check`, `borradores_aprobacion_completa_check`,
+   `emisiones_nacer_pendiente`, `emisiones_transicion_no_permitida`,
+   `emisiones_no_existe_sin_confirmar`, `emisiones_cancelada_sin_quien`, `emisiones_sin_borrado`,
+   `borradores_sin_borrado` (y las de `_sin_truncate` si salen con ese nombre).
+2. **Aprobación con destino** (`facturacion/conversacion.service.ts`): consumidor final (sin nombre
+   ni identificación, y nada vaciado por `sinDatosNoDichos`) con token válido → `PROVEEDOR`; con NIT
+   o cédula → botón "📝 Registrar sin factura" → `SIN_FACTURA`; sin token válido → aviso antes del
+   botón → `MANUAL`; a medias → pedir el dato o "consumidor final". Los avisos van **antes** del
+   botón. En una transacción: el borrador pasa a APROBADO con `destino_factura` y, solo si es
+   `PROVEEDOR`, nace la `Emision` PENDIENTE (cuenta de `adaptador.cuenta()`, modo de
+   `ALEGRA_EMITIR`, `fecha_factura` = día de Bogotá guardado como `new Date('AAAA-MM-DDT00:00:00Z')`
+   y leído con `toISOString().slice(0, 10)`). Arregla los 3 tests en rojo.
+3. `buscarPorReferencia` en el puerto y en el adaptador de Alegra: `client_identification` + fecha,
+   todas las páginas, Zod, `observations` comparado de nuestro lado; con la fecha original y el día
+   siguiente.
+4. Trabajo `emitir` en BullMQ (`jobId emitir-<id>`, `attempts: 1`, `maxStalledCount: 0`,
+   `concurrency: 1`): `UPDATE … WHERE estado = 'PENDIENTE'` a CREANDO_BORRADOR antes del POST;
+   paso 1 → BORRADOR_CREADO / NO_CREADA (solo con `definitivo`) / DESCONOCIDO; con modo
+   SOLO_BORRADOR termina ahí; paso 2 con hasta 3 intentos, 3226 y RECHAZADA; ningún error de
+   `timbrar` o `consultar` devuelve una fila con `id_externo` a PENDIENTE ni a NO_CREADA. Consultas
+   diferidas del estado DIAN. Errores solo con `describirError`.
+5. Recuperación al arrancar con `pg_try_advisory_lock`, filtrando por proveedor, cuenta y modo **en
+   la consulta**: PENDIENTE se reencola (más de 2 h → botones "Emitir / Ya la facturé a mano");
+   CREANDO_BORRADOR → DESCONOCIDO y se reconcilia; BORRADOR_CREADO (modo real) y TIMBRANDO repiten
+   el paso 2; EMITIDA con DIAN pendiente y RECHAZADA se consultan.
+6. DESCONOCIDO: reconciliación automática (a 1 y 5 min) y, si no aparece, el mensaje de qué buscar
+   y el botón "No existe en Alegra" (solo el usuario autorizado; guarda quién y cuándo) →
+   NO_CREADA; desde ahí, reintentar (→ PENDIENTE, reconciliando antes) o "Ya la facturé a mano"
+   (→ CANCELADA).
+7. Tests de integración con el proveedor falso: 201, 400 con y sin factura, timeout al crear,
+   timeout al timbrar, 3226, reinicio a mitad. Mutaciones en: no duplicar, no timbrar
+   SOLO_BORRADOR, no cruzar cuentas.
+8. Subagentes `control-calidad` y `seguridad`, PR y mostrarle la descripción a Gabriel, con los
+   textos de "no se facturará" y "facturar a mano".
+
+**Decisiones del 2026-11-12** (detalle en §4): tercera migración en este PR; nunca desactivar
+triggers; supresión por Ley 1581 por anonimización (excepción pendiente, §8); DESCONOCIDO pasa por
+NO_CREADA con búsqueda automática previa y botón con quién y cuándo; NO_CREADA → CANCELADA; cliente:
+consumidor final se emite, con NIT o cédula no hay "✅ Aprobar" ni emisión, a medias se pregunta, lo
+vaciado no cuenta; sin tope de monto para consumidor final (pregunta 12); sin token válido →
+"facturar a mano" para siempre; `status: 'draft'` no se envía; los textos los decide el agente y se
+muestran en el PR.
