@@ -458,6 +458,15 @@ otro proceso del agente.
 8. Subagentes `control-calidad` y `seguridad`, PR y mostrarle la descripción a Gabriel, con los
    textos de "no se facturará" y "facturar a mano".
 
+**Hechos (2026-11-12):** punto 1 (`REGLAS_BD` y su test contra las migraciones) y punto 2 (aprobación
+con destino). Del punto 2, lo que decidió el agente (reversible): el botón lleva el destino
+(`a:<id>:<versión>:<P|M|S>`) y, si al pulsarlo el destino ya es otro (p. ej. venció el token), no
+aprueba y reenvía el resumen; un botón viejo de tres partes es inválido. "consumidor final" como
+mensaje completo es un comando (sin IA). `borradores.datos.cliente.vaciado` marca un cliente que
+`sinDatosNoDichos` vació, y se borra cuando el usuario escribe el nombre, la identificación o
+"consumidor final". La emisión nace con el proveedor de `CONFIG_EMISION` (Alegra, desde el .env).
+Con el punto 4 pendiente, la emisión queda en PENDIENTE: nadie la procesa todavía.
+
 **Pendiente agregado (Gabriel, 2026-11-12), entra en los puntos 4 a 6:** una emisión que queda en
 TIMBRANDO o DESCONOCIDO tras agotar los intentos avisa por el chat; nunca se reintenta en silencio
 en cada arranque (§4). Decidido: reintenta y avisa, respetando el modo de la fila (SOLO_BORRADOR

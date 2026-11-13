@@ -2,11 +2,14 @@
 import { Logger } from '@nestjs/common';
 import { Prisma } from '../generated/prisma/client.js';
 import type { PrismaService } from '../prisma/prisma.service.js';
+import { ORG_FICTICIA } from '../emision/alegra/token-ficticio.spec-util.js';
+import { configEmisionFalsa } from '../emision/config-emision.spec-util.js';
 import {
   ConversacionService,
   esComando,
   fechaCorta,
   QUIETO_MS,
+  type VistaBorrador,
 } from './conversacion.service.js';
 import {
   type BorradorFactura,
@@ -49,8 +52,11 @@ function fila(cambios: Partial<Fila> = {}): Fila {
   };
 }
 
-/** Dobles de prueba: sin base de datos ni IA reales. */
-function crear(pendiente: Fila | null) {
+/**
+ * Dobles de prueba: sin base de datos ni IA reales. Por defecto el token de Alegra es válido (el
+ * cliente Ana, con cédula, va igual a SIN_FACTURA).
+ */
+function crear(pendiente: Fila | null, emision = configEmisionFalsa()) {
   const prisma = {
     borrador: {
       findFirst: vi.fn().mockResolvedValue(pendiente),
@@ -71,6 +77,7 @@ function crear(pendiente: Fila | null) {
       ),
       updateMany: vi.fn().mockResolvedValue({ count: 1 }),
     },
+    emision: { create: vi.fn().mockResolvedValue({}) },
     // La transacción recibe el mismo doble: se comprueba qué escribe, no el aislamiento.
     $transaction: vi.fn((fn: (tx: unknown) => Promise<unknown>) => fn(prisma)),
   };
@@ -78,12 +85,17 @@ function crear(pendiente: Fila | null) {
   const servicio = new ConversacionService(
     prisma as unknown as PrismaService,
     interprete as unknown as InterpreteTextoService,
+    emision,
   );
   return { servicio, prisma, interprete };
 }
 
-/** Lo que lleva el botón "✅ Aprobar" pulsado: por defecto, del borrador b1. */
-const boton = (version: number, borradorId = 'b1') => ({ borradorId, version });
+/** Lo que lleva el botón pulsado: por defecto, del borrador b1 (Ana, con cédula: sin factura). */
+const boton = (
+  version: number,
+  borradorId = 'b1',
+  destino: VistaBorrador['destino'] = 'SIN_FACTURA',
+): VistaBorrador => ({ borradorId, version, destino });
 
 const APROBACION = expect.objectContaining({
   data: expect.objectContaining({ estado: 'APROBADO' }) as unknown,
@@ -149,11 +161,12 @@ describe('ConversacionService', () => {
         data: { chatId: 42n, datos: borrador },
       });
       expect(respuesta.texto).toContain('Ana');
-      expect(respuesta.texto).toContain('Toca ✅ Aprobar');
+      expect(respuesta.texto).toContain('Toca 📝 Registrar sin factura');
       expect(respuesta.mostrar).toEqual({
         borradorId: 'nuevo',
         version: 1,
         aprobable: true,
+        destino: 'SIN_FACTURA',
       });
     });
 
@@ -175,6 +188,7 @@ describe('ConversacionService', () => {
         borradorId: 'b1',
         version: 2,
         aprobable: true,
+        destino: 'SIN_FACTURA',
       });
     });
 
@@ -244,6 +258,7 @@ describe('ConversacionService', () => {
         borradorId: 'b1',
         version: 1,
         aprobable: true,
+        destino: 'SIN_FACTURA',
       });
     });
 
@@ -293,6 +308,7 @@ describe('ConversacionService', () => {
         borradorId: 'b1',
         version: 1,
         aprobable: true,
+        destino: 'SIN_FACTURA',
       });
     });
 
@@ -434,7 +450,8 @@ describe('ConversacionService', () => {
         data: {
           chatId: 42n,
           datos: {
-            cliente: { nombre: 'Ana', identificacion: null },
+            // Marcado: un cliente vaciado no es consumidor final.
+            cliente: { nombre: 'Ana', identificacion: null, vaciado: true },
             items: [{ descripcion: 'vinilo', valor: null }],
             totalEscrito: null,
           },
@@ -568,11 +585,14 @@ describe('ConversacionService', () => {
 
         expect(prisma.borrador.updateMany).not.toHaveBeenCalled();
         expect(interprete.interpretar).not.toHaveBeenCalled();
-        expect(respuesta.texto).toContain('Para aprobar, toca ✅ Aprobar');
+        expect(respuesta.texto).toContain(
+          'Para seguir, toca 📝 Registrar sin factura',
+        );
         expect(respuesta.mostrar).toEqual({
           borradorId: 'b1',
           version: 2,
           aprobable: true,
+          destino: 'SIN_FACTURA',
         });
       },
     );
@@ -606,6 +626,188 @@ describe('ConversacionService', () => {
     });
   });
 
+  describe('destino de la venta (decisiones de Gabriel del 2026-11-12)', () => {
+    const consumidorFinal: BorradorFactura = {
+      cliente: { nombre: null, identificacion: null },
+      items: [{ descripcion: 'vinilo', valor: 50000 }],
+      totalEscrito: null,
+    };
+
+    it('consumidor final con token válido: ✅ Aprobar, sin avisos', async () => {
+      const { servicio } = crear(fila({ datos: consumidorFinal }));
+
+      const respuesta = await servicio.responder(42, 'sí');
+
+      expect(respuesta.texto).toContain('Cliente: consumidor final');
+      expect(respuesta.texto).toContain('toca ✅ Aprobar');
+      expect(respuesta.texto).not.toContain('⚠️');
+      expect(respuesta.mostrar).toEqual({
+        borradorId: 'b1',
+        version: 1,
+        aprobable: true,
+        destino: 'PROVEEDOR',
+      });
+    });
+
+    it('consumidor final con token válido: aprueba y nace la emisión PENDIENTE en la misma transacción', async () => {
+      const { servicio, prisma } = crear(
+        fila({ datos: consumidorFinal }),
+        configEmisionFalsa({ modo: 'SOLO_BORRADOR' }),
+      );
+
+      const respuesta = await servicio.aprobar(
+        42,
+        boton(1, 'b1', 'PROVEEDOR'),
+        USUARIO,
+      );
+
+      expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+      expect(prisma.borrador.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            destinoFactura: 'PROVEEDOR',
+          }) as unknown,
+        }),
+      );
+      expect(prisma.emision.create).toHaveBeenCalledWith({
+        data: {
+          borradorId: 'b1',
+          proveedor: 'ALEGRA',
+          cuentaProveedor: ORG_FICTICIA,
+          modo: 'SOLO_BORRADOR',
+          fechaFactura: expect.any(Date) as Date,
+        },
+      });
+      expect(respuesta.texto).toMatch(
+        /^✅ Factura aprobada\nCliente: consumidor final/,
+      );
+      expect(respuesta.texto).toContain('Modo de prueba');
+    });
+
+    it('sin token válido: aviso de facturar a mano antes del botón, y al aprobar no hay emisión', async () => {
+      const sinToken = configEmisionFalsa({ tokenValido: false });
+      const { servicio, prisma } = crear(
+        fila({ datos: consumidorFinal }),
+        sinToken,
+      );
+
+      const resumen = await servicio.responder(42, 'sí');
+      expect(resumen.mostrar?.destino).toBe('MANUAL');
+      expect(resumen.texto.indexOf('⚠️ La conexión con Alegra')).toBeLessThan(
+        resumen.texto.indexOf('📝 Registrar para facturar a mano'),
+      );
+
+      const respuesta = await servicio.aprobar(
+        42,
+        boton(1, 'b1', 'MANUAL'),
+        USUARIO,
+      );
+      expect(prisma.borrador.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            destinoFactura: 'MANUAL',
+          }) as unknown,
+        }),
+      );
+      expect(prisma.emision.create).not.toHaveBeenCalled();
+      expect(respuesta.texto).toMatch(
+        /^📝 Venta registrada para facturar a mano/,
+      );
+    });
+
+    it('con NIT o cédula: aviso de "no se facturará" antes del botón 📝 Registrar sin factura', async () => {
+      const { servicio } = crear(fila());
+
+      const respuesta = await servicio.responder(42, 'sí');
+
+      expect(respuesta.mostrar?.destino).toBe('SIN_FACTURA');
+      expect(respuesta.texto).toContain('no se facturará desde aquí');
+      expect(respuesta.texto).not.toContain('✅ Aprobar');
+    });
+
+    it('a medias (nombre sin identificación): no hay botón y se pide el dato o "consumidor final"', async () => {
+      const { servicio } = crear(fila({ datos: sinNit }));
+
+      const respuesta = await servicio.responder(42, 'sí');
+
+      expect(respuesta.mostrar?.aprobable).toBe(false);
+      expect(respuesta.texto).toContain(
+        'Falta: NIT o cédula del cliente. Si la venta es a consumidor final, escribe "consumidor final".',
+      );
+    });
+
+    it('un cliente vaciado al crear no es consumidor final', async () => {
+      const { servicio } = crear(
+        fila({
+          datos: {
+            ...consumidorFinal,
+            cliente: { nombre: null, identificacion: null, vaciado: true },
+          },
+        }),
+      );
+
+      const respuesta = await servicio.responder(42, 'sí');
+
+      expect(respuesta.mostrar?.aprobable).toBe(false);
+      expect(respuesta.texto).not.toContain('Cliente: consumidor final');
+      expect(respuesta.texto).toContain('escribe "consumidor final"');
+    });
+
+    it('"consumidor final" sin pasar por la IA: quita nombre, identificación y la marca', async () => {
+      const { servicio, prisma, interprete } = crear(
+        fila({
+          datos: {
+            ...borrador,
+            cliente: { nombre: 'Ana', identificacion: null, vaciado: true },
+          },
+        }),
+      );
+
+      await servicio.responder(42, 'Consumidor final.');
+
+      expect(interprete.interpretar).not.toHaveBeenCalled();
+      expect(prisma.borrador.update).toHaveBeenCalledWith({
+        where: { id: 'b1' },
+        data: {
+          datos: {
+            ...borrador,
+            cliente: { nombre: null, identificacion: null },
+          },
+          version: { increment: 1 },
+        },
+      });
+      expect(esComando('es consumidor final')).toBe(true);
+    });
+
+    it('si el token cambió entre el resumen y el botón, no aprueba y reenvía el resumen', async () => {
+      const { servicio, prisma } = crear(
+        fila({ datos: consumidorFinal }),
+        configEmisionFalsa({ tokenValido: false }),
+      );
+
+      // El usuario vio ✅ Aprobar (token válido); ahora el token venció.
+      const respuesta = await servicio.aprobar(
+        42,
+        boton(1, 'b1', 'PROVEEDOR'),
+        USUARIO,
+      );
+
+      expect(prisma.borrador.updateMany).not.toHaveBeenCalled();
+      expect(prisma.emision.create).not.toHaveBeenCalled();
+      expect(respuesta.texto).toMatch(/^La conexión con Alegra cambió/);
+      expect(respuesta.mostrar?.destino).toBe('MANUAL');
+    });
+
+    it('si el borrador cambió al aprobar (count 0), tampoco nace la emisión', async () => {
+      const { servicio, prisma } = crear(fila({ datos: consumidorFinal }));
+      prisma.borrador.updateMany.mockResolvedValueOnce({ count: 0 });
+
+      await servicio.aprobar(42, boton(1, 'b1', 'PROVEEDOR'), USUARIO);
+
+      expect(prisma.emision.create).not.toHaveBeenCalled();
+    });
+  });
+
   describe('aprobar con el botón', () => {
     it('aprueba si version == versionMostrada == la del botón, en una escritura atómica', async () => {
       const { servicio, prisma, interprete } = crear(
@@ -625,13 +827,17 @@ describe('ConversacionService', () => {
           estado: 'APROBADO',
           aprobadoPor: 4242n,
           aprobadoEn: expect.any(Date) as Date,
+          destinoFactura: 'SIN_FACTURA',
         },
       });
       expect(interprete.interpretar).not.toHaveBeenCalled();
-      // El título cambia: ya no es un borrador (4.4 §8).
-      expect(respuesta.texto).toMatch(/^✅ Factura aprobada\nCliente: Ana/);
+      // El título cambia: ya no es un borrador (4.4 §8). Con cédula no hay emisión.
+      expect(respuesta.texto).toMatch(
+        /^📝 Venta registrada sin factura\nCliente: Ana/,
+      );
       expect(respuesta.texto).not.toContain('Borrador de factura');
       expect(respuesta.mostrar).toBeUndefined();
+      expect(prisma.emision.create).not.toHaveBeenCalled();
     });
 
     it('guardado sin envío (version 2, versionMostrada 1, botón de la 1): no aprueba y reenvía', async () => {
@@ -647,6 +853,7 @@ describe('ConversacionService', () => {
         borradorId: 'b1',
         version: 2,
         aprobable: true,
+        destino: 'SIN_FACTURA',
       });
     });
 
@@ -675,6 +882,7 @@ describe('ConversacionService', () => {
         borradorId: 'b1',
         version: 2,
         aprobable: true,
+        destino: 'SIN_FACTURA',
       });
     });
 
@@ -714,6 +922,7 @@ describe('ConversacionService', () => {
         borradorId: 'b1',
         version: 2,
         aprobable: true,
+        destino: 'SIN_FACTURA',
       });
     });
 
@@ -773,6 +982,7 @@ describe('ConversacionService', () => {
         borradorId: 'nuevo',
         version: 1,
         aprobable: true,
+        destino: 'SIN_FACTURA',
       });
     });
 
@@ -788,7 +998,7 @@ describe('ConversacionService', () => {
         data: {
           chatId: 42n,
           datos: expect.objectContaining({
-            cliente: { nombre: 'Ana', identificacion: null },
+            cliente: { nombre: 'Ana', identificacion: null, vaciado: true },
           }) as unknown,
         },
       });
@@ -871,7 +1081,9 @@ describe('ConversacionService', () => {
 
       const si = crear(fila({ actualizadoEn: QUIETO }));
       const respuesta = await si.servicio.responder(42, 'sí');
-      expect(respuesta.texto).toContain('Para aprobar, toca ✅ Aprobar');
+      expect(respuesta.texto).toContain(
+        'Para seguir, toca 📝 Registrar sin factura',
+      );
       expect(si.prisma.$transaction).not.toHaveBeenCalled();
     });
 
@@ -888,6 +1100,7 @@ describe('ConversacionService', () => {
         borradorId: 'b1',
         version: 1,
         aprobable: true,
+        destino: 'SIN_FACTURA',
       });
     });
 
@@ -913,6 +1126,7 @@ describe('ConversacionService', () => {
         borradorId: 'b1',
         version: 3,
         aprobable: true,
+        destino: 'SIN_FACTURA',
       });
     });
 

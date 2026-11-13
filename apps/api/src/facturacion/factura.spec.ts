@@ -1,8 +1,13 @@
 // Todos los NIT, cédulas y documentos de este archivo son ficticios.
 import {
+  aConsumidorFinal,
   type BorradorFactura,
   calcularTotales,
+  clienteDeVenta,
+  conMarcaDeVaciado,
   conOrigenDeIdentificacion,
+  esConsumidorFinal,
+  sinNombreConsumidorFinal,
   DatosBorradorInvalidosError,
   datosCambiadosSinPedir,
   itemsQuitadosSinPedir,
@@ -63,18 +68,43 @@ describe('camposFaltantes', () => {
     expect(camposFaltantes(completo)).toEqual([]);
   });
 
-  it('lista lo que falta', () => {
+  it('sin cliente es consumidor final: solo falta el total', () => {
     const vacio: BorradorFactura = {
       cliente: { nombre: null, identificacion: null },
       items: [],
       totalEscrito: null,
     };
 
-    expect(camposFaltantes(vacio)).toEqual([
+    expect(camposFaltantes(vacio)).toEqual(['total de la factura']);
+  });
+
+  it('con un cliente vaciado al crear, faltan nombre e identificación', () => {
+    const vaciado: BorradorFactura = {
+      cliente: { nombre: null, identificacion: null, vaciado: true },
+      items: [],
+      totalEscrito: null,
+    };
+
+    expect(camposFaltantes(vaciado)).toEqual([
       'nombre del cliente',
       'NIT o cédula del cliente',
       'total de la factura',
     ]);
+  });
+
+  it.each([
+    [
+      'nombre sin identificación',
+      { nombre: 'Ana', identificacion: null },
+      ['NIT o cédula del cliente'],
+    ],
+    [
+      'identificación sin nombre',
+      { nombre: null, identificacion: '12345678' },
+      ['nombre del cliente'],
+    ], // cédula ficticia
+  ])('a medias (%s): falta el otro dato', (_caso, cliente, faltan) => {
+    expect(camposFaltantes({ ...completo, cliente })).toEqual(faltan);
   });
 
   it('el total puede salir de la suma de los ítems', () => {
@@ -1216,7 +1246,7 @@ describe('sinDatosNoDichos (al crear, nada que no esté en el mensaje)', () => {
     );
 
     expect(borrador).toEqual({
-      cliente: { nombre: 'Marta', identificacion: null },
+      cliente: { nombre: 'Marta', identificacion: null, vaciado: true },
       items: [
         { descripcion: 'estuco', valor: 40000 },
         { descripcion: 'brocha', valor: null },
@@ -1247,5 +1277,112 @@ describe('sinDatosNoDichos (al crear, nada que no esté en el mensaje)', () => {
     );
 
     expect(vaciados).toEqual([{ campo: 'total', valor: 40000 }]);
+  });
+});
+
+describe('cliente de la venta (Res. DIAN 000202, decisiones del 2026-11-12)', () => {
+  const sinCliente = { nombre: null, identificacion: null };
+
+  it.each([
+    ['sin nombre ni identificación', sinCliente, 'consumidor_final'],
+    ['con nombre e identificación', completo.cliente, 'identificado'],
+    ['solo nombre', { nombre: 'Ana', identificacion: null }, 'a_medias'],
+    [
+      'solo identificación',
+      { nombre: null, identificacion: '12345678' },
+      'a_medias',
+    ],
+    ['vaciado al crear', { ...sinCliente, vaciado: true }, 'a_medias'],
+  ])('%s → %s', (_caso, cliente, esperado) => {
+    expect(clienteDeVenta({ ...completo, cliente })).toBe(esperado);
+  });
+
+  it.each([
+    'consumidor final',
+    'Consumidor final.',
+    'es consumidor final',
+    'a consumidor final!',
+    'para un consumidor final',
+  ])('"%s" es el comando de consumidor final', (texto) => {
+    expect(esConsumidorFinal(texto)).toBe(true);
+  });
+
+  it.each([
+    'consumidor final, vinilo 50 mil',
+    'no es consumidor final',
+    'consumidor',
+  ])('"%s" no es el comando', (texto) => {
+    expect(esConsumidorFinal(texto)).toBe(false);
+  });
+
+  it('aConsumidorFinal quita nombre, identificación y marcas', () => {
+    const borrador = {
+      ...completo,
+      cliente: {
+        nombre: 'Ana',
+        identificacion: '12345678',
+        identificacionPorVoz: true,
+        vaciado: true,
+      },
+    };
+
+    expect(aConsumidorFinal(borrador).cliente).toEqual(sinCliente);
+  });
+
+  it('"consumidor final" como nombre (sin identificación) queda sin nombre', () => {
+    const leido = {
+      ...completo,
+      cliente: { nombre: 'Consumidor Final', identificacion: null },
+    };
+
+    expect(sinNombreConsumidorFinal(leido).cliente).toEqual(sinCliente);
+    // Con identificación no se toca: sería un dato a medias que hay que preguntar.
+    const conId = {
+      ...completo,
+      cliente: { nombre: 'consumidor final', identificacion: '12345678' },
+    };
+    expect(sinNombreConsumidorFinal(conId)).toBe(conId);
+  });
+
+  it('la marca de vaciado sigue hasta que el usuario escribe nombre o identificación', () => {
+    const anterior = {
+      ...completo,
+      cliente: { ...sinCliente, vaciado: true },
+    };
+
+    expect(
+      conMarcaDeVaciado(anterior, { ...completo, cliente: sinCliente }).cliente,
+    ).toEqual({ ...sinCliente, vaciado: true });
+    expect(
+      conMarcaDeVaciado(anterior, {
+        ...completo,
+        cliente: { nombre: 'Ana', identificacion: null },
+      }).cliente,
+    ).toEqual({ nombre: 'Ana', identificacion: null });
+    // Sin marca antes, no aparece una.
+    expect(
+      conMarcaDeVaciado(
+        { ...completo, cliente: sinCliente },
+        { ...completo, cliente: { ...sinCliente, vaciado: true } },
+      ).cliente,
+    ).toEqual(sinCliente);
+  });
+
+  it('el resumen dice "consumidor final" y es aprobable', () => {
+    const venta = { ...completo, cliente: sinCliente };
+
+    expect(resumenBorrador(venta)).toContain('Cliente: consumidor final');
+    expect(motivoNoAprobable(venta)).toBeNull();
+  });
+
+  it('a medias: el motivo pide el dato o "consumidor final"', () => {
+    expect(
+      motivoNoAprobable({
+        ...completo,
+        cliente: { nombre: 'Ana', identificacion: null },
+      }),
+    ).toBe(
+      'Aún falta: NIT o cédula del cliente. Si la venta es a consumidor final, escribe "consumidor final".',
+    );
   });
 });

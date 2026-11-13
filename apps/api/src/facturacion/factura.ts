@@ -50,6 +50,12 @@ export interface BorradorFactura {
     identificacion: string | null;
     /** La identificación actual la dictó el usuario en una nota de voz (Whisper pierde dígitos). */
     identificacionPorVoz?: boolean;
+    /**
+     * Al crear el borrador, la IA leyó un nombre o una identificación que no está escrito en el
+     * mensaje y se dejó vacío (`sinDatosNoDichos`). Mientras siga así, un cliente vacío **no** es
+     * consumidor final: el usuario escribe el dato o "consumidor final" (Gabriel, 2026-11-12).
+     */
+    vaciado?: boolean;
   };
   items: ItemBorrador[];
   /** Total escrito por el usuario, sin IVA. */
@@ -73,6 +79,7 @@ export const borradorFacturaSchema = z.object({
     nombre: z.string().nullable(),
     identificacion: z.string().nullable(),
     identificacionPorVoz: z.boolean().optional(),
+    vaciado: z.boolean().optional(),
   }),
   items: z.array(z.object({ descripcion: z.string(), valor: pesosSchema })),
   totalEscrito: pesosSchema,
@@ -142,15 +149,85 @@ export function totalBase(borrador: BorradorFactura): number | null {
   return (valores as number[]).reduce((suma, v) => suma + v, 0);
 }
 
-/** Datos que faltan para poder emitir la factura, en palabras para el usuario. */
+/**
+ * A quién va la venta (Res. DIAN 000202 de 2025, art. 3, y decisiones de Gabriel del 2026-11-12):
+ * - `consumidor_final`: sin nombre ni identificación, y nada de eso se vació al crear.
+ * - `identificado`: con nombre e identificación. El bot todavía no emite a nombre de alguien.
+ * - `a_medias`: solo uno de los dos, o un cliente que la IA leyó sin estar escrito: se pregunta.
+ */
+export type ClienteDeVenta = 'consumidor_final' | 'identificado' | 'a_medias';
+
+export function clienteDeVenta(borrador: BorradorFactura): ClienteDeVenta {
+  const { nombre, identificacion, vaciado } = borrador.cliente;
+  if (nombre && identificacion) return 'identificado';
+  if (!nombre && !identificacion && !vaciado) return 'consumidor_final';
+  return 'a_medias';
+}
+
+/** "consumidor final" como mensaje completo ("es consumidor final", "a consumidor final."). */
+const CONSUMIDOR_FINAL =
+  /^\s*(?:(?:es|a|para)\s+)?(?:un\s+)?consumidor\s+final\s*[.!]*\s*$/i;
+
+/** true si el mensaje entero dice que la venta es a consumidor final. */
+export function esConsumidorFinal(mensaje: string): boolean {
+  return CONSUMIDOR_FINAL.test(mensaje);
+}
+
+/**
+ * El borrador como venta a consumidor final: sin nombre ni identificación y sin la marca de
+ * vaciado. Solo se usa cuando el usuario lo escribió (`esConsumidorFinal`), nunca por la IA.
+ */
+export function aConsumidorFinal(borrador: BorradorFactura): BorradorFactura {
+  return {
+    ...borrador,
+    cliente: { nombre: null, identificacion: null },
+  };
+}
+
+/**
+ * Si la IA puso "consumidor final" como nombre del cliente (sin identificación), es lo que el
+ * usuario escribió: se deja sin nombre, que es como se guarda un consumidor final.
+ */
+export function sinNombreConsumidorFinal(
+  borrador: BorradorFactura,
+): BorradorFactura {
+  const { nombre, identificacion } = borrador.cliente;
+  if (identificacion || !nombre || !/^\s*consumidor\s+final\s*$/i.test(nombre))
+    return borrador;
+  return { ...borrador, cliente: { ...borrador.cliente, nombre: null } };
+}
+
+/**
+ * La marca de vaciado pasa de una versión a la siguiente (la IA no la ve) hasta que el usuario
+ * escribe el nombre o la identificación.
+ */
+export function conMarcaDeVaciado(
+  anterior: BorradorFactura,
+  nuevo: BorradorFactura,
+): BorradorFactura {
+  const { vaciado: _descartada, ...cliente } = nuevo.cliente;
+  const sigue =
+    anterior.cliente.vaciado === true &&
+    !nuevo.cliente.nombre &&
+    !nuevo.cliente.identificacion;
+  return { ...nuevo, cliente: sigue ? { ...cliente, vaciado: true } : cliente };
+}
+
+/** Datos que faltan para poder aprobar, en palabras para el usuario. */
 export function camposFaltantes(borrador: BorradorFactura): string[] {
   const faltantes: string[] = [];
-  if (!borrador.cliente.nombre) faltantes.push('nombre del cliente');
-  if (!borrador.cliente.identificacion)
-    faltantes.push('NIT o cédula del cliente');
+  if (clienteDeVenta(borrador) === 'a_medias') {
+    if (!borrador.cliente.nombre) faltantes.push('nombre del cliente');
+    if (!borrador.cliente.identificacion)
+      faltantes.push('NIT o cédula del cliente');
+  }
   if (!totalBase(borrador)) faltantes.push('total de la factura');
   return faltantes;
 }
+
+/** Cómo decir que la venta es a consumidor final, cuando faltan datos del cliente. */
+const O_CONSUMIDOR_FINAL =
+  'Si la venta es a consumidor final, escribe "consumidor final".';
 
 /** true si hay total escrito y todos los ítems tienen valor, pero no suman lo mismo. */
 export function sumaNoCuadra(borrador: BorradorFactura): boolean {
@@ -665,6 +742,8 @@ export function sinDatosNoDichos(
       if (dato.despues !== null)
         vaciados.push({ campo: dato.campo, valor: dato.despues });
       cliente[dato.campo] = null;
+      // Un cliente vaciado no es consumidor final (decisión de Gabriel del 2026-11-12).
+      cliente.vaciado = true;
     }
   }
   const enMensaje = valoresDelMensaje(mensaje);
@@ -683,7 +762,11 @@ export function sinDatosNoDichos(
 /** Por qué no se puede aprobar todavía, o null si está lista para aprobar. */
 export function motivoNoAprobable(borrador: BorradorFactura): string | null {
   const faltantes = camposFaltantes(borrador);
-  if (faltantes.length > 0) return `Aún falta: ${faltantes.join(', ')}.`;
+  if (faltantes.length > 0) {
+    const datosCliente =
+      clienteDeVenta(borrador) === 'a_medias' ? ` ${O_CONSUMIDOR_FINAL}` : '';
+    return `Aún falta: ${faltantes.join(', ')}.${datosCliente}`;
+  }
   // El DV no cuadra o el número no tiene una forma confirmada: no se corrige solo (4.4 §5.1).
   const problema = identificacionCliente(borrador)?.problema;
   if (problema) return problema;
@@ -716,7 +799,10 @@ export function resumenBorrador(
   const numero = id?.numero ? `${id.numero}${id.dv ? `-${id.dv}` : ''}` : null;
   const lineas = [
     titulo,
-    `Cliente: ${nombre ?? '❓'} · NIT/CC: ${numero ?? borrador.cliente.identificacion ?? '❓'}`,
+    // Nunca en silencio: rehacer una factura a nombre equivocado exige nota crédito (§6).
+    clienteDeVenta(borrador) === 'consumidor_final'
+      ? 'Cliente: consumidor final'
+      : `Cliente: ${nombre ?? '❓'} · NIT/CC: ${numero ?? borrador.cliente.identificacion ?? '❓'}`,
     ...borrador.items.map(
       (item) => `• ${item.descripcion}: ${pesos(item.valor)}`,
     ),
@@ -763,7 +849,9 @@ export function resumenBorrador(
 
   const faltantes = camposFaltantes(borrador);
   if (faltantes.length > 0) {
-    lineas.push(`Falta: ${faltantes.join(', ')}.`);
+    const datosCliente =
+      clienteDeVenta(borrador) === 'a_medias' ? ` ${O_CONSUMIDOR_FINAL}` : '';
+    lineas.push(`Falta: ${faltantes.join(', ')}.${datosCliente}`);
   }
   return lineas.join('\n');
 }

@@ -1,8 +1,12 @@
 import { Module } from '@nestjs/common';
-import { ConfigModule } from '@nestjs/config';
+import { ConfigModule, ConfigService } from '@nestjs/config';
 import { AppController } from './app.controller.js';
 import { AppService } from './app.service.js';
 import { validateEnv } from './config/env.schema.js';
+import {
+  CONFIG_EMISION,
+  configEmisionDesdeEnv,
+} from './emision/config-emision.js';
 import { AvisoTokenService } from './emision/alegra/aviso-token.service.js';
 import { ConversacionService } from './facturacion/conversacion.service.js';
 import { InterpreteTextoService } from './facturacion/interprete-texto.service.js';
@@ -23,6 +27,11 @@ import { PrismaModule } from './prisma/prisma.module.js';
   controllers: [AppController],
   providers: [
     AppService,
+    {
+      provide: CONFIG_EMISION,
+      useFactory: configEmisionDesdeEnv,
+      inject: [ConfigService],
+    },
     InterpreteTextoService,
     ConversacionService,
     TranscriptorService,

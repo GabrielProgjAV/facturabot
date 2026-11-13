@@ -44,7 +44,12 @@ function crearDeps() {
   const deps = {
     responder: vi.fn().mockResolvedValue({
       texto: 'Resumen',
-      mostrar: { borradorId: 'b1', version: 2, aprobable: true },
+      mostrar: {
+        borradorId: 'b1',
+        version: 2,
+        aprobable: true,
+        destino: 'PROVEEDOR',
+      },
     }),
     aprobar: vi.fn().mockResolvedValue({ texto: '✅ Factura aprobada.' }),
     quitarBoton: vi.fn().mockResolvedValue(undefined),
@@ -67,6 +72,7 @@ function crearDeps() {
 const VISTA = {
   borradorId: '01900000-0000-7000-8000-000000000001',
   version: 1,
+  destino: 'PROVEEDOR' as const,
 };
 const texto = () => ({ tipo: 'texto', chatId: CHAT, texto: TEXTO });
 const USUARIO = 4243; // usuario ficticio que pulsa el botón
@@ -98,6 +104,7 @@ describe('procesarMensaje: botón "✅ Aprobar"', () => {
     expect(deps.enviar).toHaveBeenCalledWith(CHAT, 'Resumen', {
       borradorId: 'b1',
       version: 2,
+      destino: 'PROVEEDOR',
     });
   });
 
@@ -105,7 +112,12 @@ describe('procesarMensaje: botón "✅ Aprobar"', () => {
     const { deps } = crearDeps();
     deps.responder.mockResolvedValueOnce({
       texto: 'Falta el NIT',
-      mostrar: { borradorId: 'b1', version: 2, aprobable: false },
+      mostrar: {
+        borradorId: 'b1',
+        version: 2,
+        aprobable: false,
+        destino: 'PROVEEDOR',
+      },
     });
 
     await procesarMensaje(texto(), 'j1', deps);
@@ -137,7 +149,12 @@ describe('procesarMensaje: botón "✅ Aprobar"', () => {
     const { deps } = crearDeps();
     deps.aprobar.mockResolvedValueOnce({
       texto: 'Ese resumen ya no está vigente…',
-      mostrar: { borradorId: 'b1', version: 3, aprobable: true },
+      mostrar: {
+        borradorId: 'b1',
+        version: 3,
+        aprobable: true,
+        destino: 'PROVEEDOR',
+      },
     });
 
     await procesarMensaje(aprobar, 'j9', deps);
@@ -149,6 +166,7 @@ describe('procesarMensaje: botón "✅ Aprobar"', () => {
       {
         borradorId: 'b1',
         version: 3,
+        destino: 'PROVEEDOR',
       },
     );
     expect(deps.marcarMostrada).toHaveBeenCalledWith('b1', 3);
@@ -178,6 +196,8 @@ describe('procesarMensaje: botón "✅ Aprobar"', () => {
   it.each([
     ['borradorId que no es uuid', { ...aprobar, borradorId: 'b1' }],
     ['versión 0', { ...aprobar, version: 0 }],
+    ['sin destino', { ...aprobar, destino: undefined }],
+    ['destino desconocido', { ...aprobar, destino: 'OTRO' }],
     [
       'sin messageId',
       { tipo: 'aprobar', chatId: CHAT, ...VISTA, usuarioId: USUARIO },
@@ -525,7 +545,12 @@ describe('avisarTrabajoFallido', () => {
     const { deps } = crearDeps();
     deps.estadoTrasFallo.mockResolvedValueOnce({
       texto: 'No alcancé a terminar… Resumen',
-      mostrar: { borradorId: 'b1', version: 3, aprobable: true },
+      mostrar: {
+        borradorId: 'b1',
+        version: 3,
+        aprobable: true,
+        destino: 'PROVEEDOR',
+      },
     });
 
     await avisarTrabajoFallido(texto(), 'j8', ENCOLADO, cortado(), deps);
@@ -533,7 +558,7 @@ describe('avisarTrabajoFallido', () => {
     expect(deps.enviar).toHaveBeenCalledWith(
       CHAT,
       'No alcancé a terminar… Resumen',
-      { borradorId: 'b1', version: 3 },
+      { borradorId: 'b1', version: 3, destino: 'PROVEEDOR' },
     );
     expect(deps.marcarMostrada).toHaveBeenCalledWith('b1', 3);
   });

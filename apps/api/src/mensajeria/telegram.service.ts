@@ -14,6 +14,7 @@ import type { Env } from '../config/env.schema.js';
 import {
   ConversacionService,
   esComando,
+  TEXTO_BOTON,
   type VistaBorrador,
 } from '../facturacion/conversacion.service.js';
 import { TranscriptorService } from '../voz/transcriptor.service.js';
@@ -35,26 +36,44 @@ import {
   VozDemasiadoPesadaError,
 } from './procesador-mensajes.js';
 
+/** Letra del destino en los datos del botón (P = proveedor, M = a mano, S = sin factura). */
+const LETRA_DESTINO = {
+  PROVEEDOR: 'P',
+  MANUAL: 'M',
+  SIN_FACTURA: 'S',
+} as const satisfies Record<VistaBorrador['destino'], string>;
+
+const DESTINO_DE_LETRA = {
+  P: 'PROVEEDOR',
+  M: 'MANUAL',
+  S: 'SIN_FACTURA',
+} as const;
+
 /**
- * Datos del botón "✅ Aprobar": `a:<borradorId>:<version>`. Con un UUID de 36 caracteres y una
- * versión de hasta 6 dígitos son como máximo 45 bytes (la Bot API admite de 1 a 64).
+ * Datos del botón de aprobar: `a:<borradorId>:<version>:<P|M|S>`. Con un UUID de 36 caracteres y
+ * una versión de hasta 6 dígitos son como máximo 47 bytes (la Bot API admite de 1 a 64).
  */
 export function datosBotonAprobar(vista: VistaBorrador): string {
-  return `a:${vista.borradorId}:${vista.version}`;
+  return `a:${vista.borradorId}:${vista.version}:${LETRA_DESTINO[vista.destino]}`;
 }
 
 const botonAprobarSchema = z.object({
   borradorId: z.uuid(),
   version: z.coerce.number().int().positive().max(999_999),
+  destino: z.enum(['PROVEEDOR', 'MANUAL', 'SIN_FACTURA']),
 });
 
-/** Lee los datos de un botón "✅ Aprobar"; null si no tienen la forma esperada (los envía el cliente). */
+/**
+ * Lee los datos de un botón de aprobar; null si no tienen la forma esperada (los envía el cliente).
+ * Un botón de antes del destino (`a:<id>:<version>`) tampoco vale: no dice qué aviso vio el usuario.
+ */
 export function leerBotonAprobar(datos: string): VistaBorrador | null {
-  const partes = /^a:([^:]+):(\d{1,6})$/.exec(datos);
+  const partes = /^a:([^:]+):(\d{1,6}):([PMS])$/.exec(datos);
   if (!partes) return null;
   const vista = botonAprobarSchema.safeParse({
     borradorId: partes[1],
     version: partes[2],
+    destino: DESTINO_DE_LETRA[partes[3] as keyof typeof DESTINO_DE_LETRA],
   });
   return vista.success ? vista.data : null;
 }
@@ -268,7 +287,7 @@ export class TelegramService
       boton
         ? {
             reply_markup: new InlineKeyboard().text(
-              '✅ Aprobar',
+              TEXTO_BOTON[boton.destino],
               datosBotonAprobar(boton),
             ),
           }

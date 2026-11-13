@@ -37,12 +37,13 @@ export const trabajoMensajeSchema = z.discriminatedUnion('tipo', [
     chatId: z.number().int(),
     texto: z.string().min(1).max(LIMITE_TEXTO),
   }),
-  /** Botón "✅ Aprobar" pulsado: el borrador y la versión del mensaje que el usuario tenía. */
+  /** Botón de aprobar pulsado: el borrador, la versión y el destino del mensaje que el usuario tenía. */
   z.object({
     tipo: z.literal('aprobar'),
     chatId: z.number().int(),
     borradorId: z.uuid(),
     version: z.number().int().positive(),
+    destino: z.enum(['PROVEEDOR', 'MANUAL', 'SIN_FACTURA']),
     /** Mensaje del botón pulsado: se le quita el botón para que no se pulse otra vez. */
     messageId: z.number().int().positive(),
     /** Id de Telegram de quien pulsó el botón (dato personal: nunca va a los logs). */
@@ -197,10 +198,7 @@ export async function procesarMensaje(
   }
 
   const { mostrar } = respuesta;
-  const boton =
-    mostrar?.aprobable === true
-      ? { borradorId: mostrar.borradorId, version: mostrar.version }
-      : null;
+  const boton = mostrar?.aprobable === true ? vistaDe(mostrar) : null;
   // Aviso del token de Alegra, una vez al día, antes de la respuesta (fase 5, §2).
   const aviso = deps.avisoDelDia?.() ?? null;
   const texto = aviso
@@ -236,6 +234,15 @@ ${respuesta.texto}`
   );
 }
 
+/** Solo lo que lleva el botón: borrador, versión y destino. */
+function vistaDe({
+  borradorId,
+  version,
+  destino,
+}: VistaBorrador): VistaBorrador {
+  return { borradorId, version, destino };
+}
+
 /** Lo que hace cada tipo de trabajo. Con ECONNREFUSED nada se aplicó: se reintenta una vez. */
 function procesar(
   trabajo: TrabajoMensaje,
@@ -253,12 +260,7 @@ function procesar(
       );
     case 'aprobar':
       return conReintento(
-        () =>
-          deps.aprobar(
-            trabajo.chatId,
-            { borradorId: trabajo.borradorId, version: trabajo.version },
-            trabajo.usuarioId,
-          ),
+        () => deps.aprobar(trabajo.chatId, vistaDe(trabajo), trabajo.usuarioId),
         esConexionRechazada,
         ctx,
       );
@@ -399,9 +401,7 @@ export async function avisarTrabajoFallido(
     await deps.enviar(
       chatId,
       estado?.texto ?? MENSAJES_FALLA.reinicio,
-      mostrar?.aprobable
-        ? { borradorId: mostrar.borradorId, version: mostrar.version }
-        : null,
+      mostrar?.aprobable ? vistaDe(mostrar) : null,
     );
   } catch (errEnvio) {
     deps.logger.error(

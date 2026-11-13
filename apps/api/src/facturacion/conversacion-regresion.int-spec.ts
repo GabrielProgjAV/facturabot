@@ -5,6 +5,7 @@
 import 'dotenv/config';
 import type { ConfigService } from '@nestjs/config';
 import type { Env } from '../config/env.schema.js';
+import { configEmisionFalsa } from '../emision/config-emision.spec-util.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { ConversacionService } from './conversacion.service.js';
 import {
@@ -90,6 +91,7 @@ const db = new PrismaService(config);
 const servicio = new ConversacionService(
   db,
   new InterpreteTextoService(config),
+  configEmisionFalsa(),
 );
 
 beforeAll(async () => {
@@ -134,10 +136,15 @@ describe('regresión de la prueba manual del 2026-11-10', () => {
       'Falta el dígito de verificación del NIT 900000001.',
     );
 
-    // 4. NIT completo: aparece el botón ✅ Aprobar.
+    // 4. NIT completo: aparece el botón, pero con NIT la venta no se factura desde el bot (paso 7).
     const completo = await servicio.responder(CHAT, 'el nit es 900000001-2');
-    expect(completo.mostrar).toMatchObject({ aprobable: true, version: 3 });
-    expect(completo.texto).toContain('Toca ✅ Aprobar');
+    expect(completo.mostrar).toMatchObject({
+      aprobable: true,
+      version: 3,
+      destino: 'SIN_FACTURA',
+    });
+    expect(completo.texto).toContain('Toca 📝 Registrar sin factura');
+    expect(completo.texto).toContain('no se facturará desde aquí');
     expect(completo.texto).toContain('NIT/CC: 900000001-2');
 
     // 5. "cancelar": borrador cancelado.
@@ -159,7 +166,7 @@ describe('regresión de la prueba manual del 2026-11-10', () => {
     expect(corta.texto).toContain(
       'Tiene 3 dígitos: es muy corto para una cédula o un NIT.',
     );
-    expect(corta.texto).not.toContain('Toca ✅ Aprobar');
+    expect(corta.texto).not.toContain('Toca ');
 
     // 7. "cancelar": limpia.
     expect((await servicio.responder(CHAT, 'cancelar')).texto).toContain(

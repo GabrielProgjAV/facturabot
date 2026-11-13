@@ -1,10 +1,22 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
+import {
+  CONFIG_EMISION,
+  type ConfigEmision,
+} from '../emision/config-emision.js';
+import { fechaFacturaParaGuardar } from '../emision/fecha-factura.js';
+import { ErrorProveedor } from '../emision/proveedor-facturacion.js';
 import { Prisma } from '../generated/prisma/client.js';
 import type { Borrador } from '../generated/prisma/client.js';
+import type { DestinoFactura } from '../generated/prisma/enums.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import {
+  aConsumidorFinal,
   type BorradorFactura,
+  clienteDeVenta,
+  conMarcaDeVaciado,
   conOrigenDeIdentificacion,
+  esConsumidorFinal,
+  sinNombreConsumidorFinal,
   DatosBorradorInvalidosError,
   type DatoCambiado,
   type DatoVaciado,
@@ -49,19 +61,39 @@ export function fechaCorta(fecha: Date): string {
   return formatoFecha.format(fecha);
 }
 
-/** "sí" o "cancelar": no pasan por la IA, así que no hace falta avisar "Procesando…". */
+/** "sí", "cancelar" o "consumidor final": no pasan por la IA, así que no se avisa "Procesando…". */
 export function esComando(texto: string): boolean {
-  return CANCELAR.test(texto) || APROBAR.test(texto);
+  return (
+    CANCELAR.test(texto) || APROBAR.test(texto) || esConsumidorFinal(texto)
+  );
 }
 
 /**
- * Qué borrador y en qué versión: lo que lleva el botón "✅ Aprobar" del resumen que el usuario tiene
- * en pantalla. Con solo la versión, se podría aprobar otro borrador en la misma versión.
+ * Qué borrador, en qué versión y con qué destino: lo que lleva el botón del resumen que el usuario
+ * tiene en pantalla. Con solo la versión, se podría aprobar otro borrador en la misma versión; sin
+ * el destino, una venta podría quedar "para facturar a mano" sin que el usuario viera el aviso
+ * (p. ej. si el token venció entre el resumen y el botón).
  */
 export interface VistaBorrador {
   borradorId: string;
   version: number;
+  destino: DestinoFactura;
 }
+
+/** El texto del botón según el destino de la venta. */
+export const TEXTO_BOTON: Record<DestinoFactura, string> = {
+  PROVEEDOR: '✅ Aprobar',
+  SIN_FACTURA: '📝 Registrar sin factura',
+  MANUAL: '📝 Registrar para facturar a mano',
+};
+
+/** Avisos que van en el resumen, antes del botón, cuando la venta no se emitirá desde el bot. */
+export const AVISO_DESTINO = {
+  SIN_FACTURA:
+    '⚠️ Esta venta tiene NIT o cédula. Por ahora el bot solo factura a consumidor final: esta venta no se facturará desde aquí. Si el cliente necesita la factura, hazla a mano en Alegra.',
+  MANUAL:
+    '⚠️ La conexión con Alegra no está lista (el token falta, venció o no es válido). Si la registras, esta venta queda para facturar a mano en Alegra, y el bot no la emitirá después, aunque se arregle el token.',
+} as const;
 
 export interface RespuestaConversacion {
   texto: string;
@@ -94,7 +126,13 @@ interface Escritura {
 }
 
 /** Qué decirle al usuario debajo del resumen. */
-type AvisoResumen = 'ninguno' | 'usarBoton' | 'noVigente' | 'quieto';
+type AvisoResumen =
+  'ninguno' | 'usarBoton' | 'noVigente' | 'quieto' | 'destinoCambio';
+
+/** A dónde iría la venta si se aprobara ahora, con la cuenta del proveedor si es PROVEEDOR. */
+type DestinoActual =
+  | { destino: 'PROVEEDOR'; cuenta: string }
+  | { destino: 'SIN_FACTURA' | 'MANUAL' };
 
 /**
  * Lleva la conversación de cada chat: crea el borrador con el primer mensaje, lo corrige o
@@ -112,6 +150,7 @@ export class ConversacionService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly interprete: InterpreteTextoService,
+    @Inject(CONFIG_EMISION) private readonly emision: ConfigEmision,
   ) {}
 
   /**
@@ -148,6 +187,20 @@ export class ConversacionService {
       if (!pendiente) return { texto: 'No hay ninguna factura en curso.' };
       // Un "sí" (escrito o dictado) no aprueba: se reenvía el resumen vigente con su botón.
       return this.conResumen(pendiente, 'usarBoton');
+    }
+
+    if (esConsumidorFinal(texto)) {
+      if (!pendiente) return { texto: 'No hay ninguna factura en curso.' };
+      // Lo dice el usuario, no la IA: sin nombre ni identificación y sin la marca de vaciado. El
+      // resumen nuevo se muestra antes de poder aprobar, así que no hace falta el aviso de quieto.
+      const fila = await this.prisma.borrador.update({
+        where: { id: pendiente.id },
+        data: {
+          datos: aJson(aConsumidorFinal(datosDe(pendiente))),
+          version: { increment: 1 },
+        },
+      });
+      return this.conResumen(fila, 'ninguno');
     }
 
     if (pendiente && quieto(pendiente)) {
@@ -224,30 +277,90 @@ export class ConversacionService {
     const motivo = motivoNoAprobable(actual);
     if (motivo) return { texto: `No puedo aprobarla todavía. ${motivo}` };
 
-    // Una sola escritura atómica: si el borrador cambió entre la lectura y aquí, no aprueba.
-    const { count } = await this.prisma.borrador.updateMany({
-      where: {
-        id: pendiente.id,
-        estado: 'PENDIENTE',
-        version: v,
-        versionMostrada: v,
-      },
-      data: {
-        estado: 'APROBADO',
-        aprobadoPor: BigInt(usuarioId),
-        aprobadoEn: new Date(),
-      },
+    // El destino se fija ahora y para siempre; tiene que ser el que el usuario vio con su aviso.
+    const destino = this.destinoActual(actual);
+    if (destino.destino !== vista.destino) {
+      this.logger.warn(
+        `Aprobación descartada: el destino cambió (${vista.destino} → ${destino.destino})`,
+      );
+      return this.conResumen(pendiente, 'destinoCambio');
+    }
+
+    // Bandeja de salida (§4): en una transacción, el borrador pasa a APROBADO con su destino y, solo
+    // si va al proveedor, nace la emisión PENDIENTE. Si el borrador cambió entre la lectura y aquí,
+    // no se aprueba ni se crea nada.
+    const ahora = new Date();
+    const aprobado = await this.prisma.$transaction(async (tx) => {
+      const { count } = await tx.borrador.updateMany({
+        where: {
+          id: pendiente.id,
+          estado: 'PENDIENTE',
+          version: v,
+          versionMostrada: v,
+        },
+        data: {
+          estado: 'APROBADO',
+          aprobadoPor: BigInt(usuarioId),
+          aprobadoEn: ahora,
+          destinoFactura: destino.destino,
+        },
+      });
+      if (count !== 1) return false;
+      if (destino.destino === 'PROVEEDOR') {
+        await tx.emision.create({
+          data: {
+            borradorId: pendiente.id,
+            proveedor: this.emision.proveedor.nombre,
+            cuentaProveedor: destino.cuenta,
+            modo: this.emision.modo,
+            fechaFactura: fechaFacturaParaGuardar(ahora),
+          },
+        });
+      }
+      return true;
     });
-    if (count !== 1) {
+    if (!aprobado) {
       this.logger.warn('Aprobación descartada: el borrador cambió al aprobar');
-      const ahora = await this.buscarPendiente(pendiente.chatId);
-      return ahora
-        ? this.conResumen(ahora, 'noVigente')
+      const vigente = await this.buscarPendiente(pendiente.chatId);
+      return vigente
+        ? this.conResumen(vigente, 'noVigente')
         : { texto: 'No hay ninguna factura en curso.' };
     }
-    return {
-      texto: `${resumenBorrador(actual, '✅ Factura aprobada')}\n\n(Se emitirá en Alegra cuando conectemos esa fase.)`,
-    };
+    return { texto: this.textoAprobado(actual, destino.destino) };
+  }
+
+  /** Lo que se le dice al usuario al aprobar, según el destino. */
+  private textoAprobado(
+    borrador: BorradorFactura,
+    destino: DestinoFactura,
+  ): string {
+    const resumen = resumenBorrador(borrador, tituloAprobado(destino));
+    switch (destino) {
+      case 'PROVEEDOR':
+        return this.emision.modo === 'TIMBRAR'
+          ? `${resumen}\n\n🧾 Quedó en cola para emitirse en Alegra ante la DIAN.`
+          : `${resumen}\n\n🧾 Quedó en cola para Alegra. Modo de prueba: solo se crea el borrador en Alegra, no se envía a la DIAN.`;
+      case 'SIN_FACTURA':
+        return `${resumen}\n\nNo se facturó desde el bot. Si el cliente necesita la factura, hazla a mano en Alegra.`;
+      case 'MANUAL':
+        return `${resumen}\n\nHazla a mano en Alegra. El bot no la emitirá, ni siquiera cuando se arregle el token.`;
+    }
+  }
+
+  /**
+   * A dónde iría la venta si se aprobara ahora (decisiones de Gabriel del 2026-11-12): con NIT o
+   * cédula, sin factura; a consumidor final, al proveedor si el token es válido, y si no, a mano.
+   */
+  private destinoActual(borrador: BorradorFactura): DestinoActual {
+    if (clienteDeVenta(borrador) === 'identificado')
+      return { destino: 'SIN_FACTURA' };
+    try {
+      return { destino: 'PROVEEDOR', cuenta: this.emision.proveedor.cuenta() };
+    } catch (err) {
+      // Token que falta, venció o no trae cuenta: no se emite.
+      if (err instanceof ErrorProveedor) return { destino: 'MANUAL' };
+      throw err;
+    }
   }
 
   /**
@@ -277,9 +390,12 @@ export class ConversacionService {
     const cambio = ultimo.aprobadoEn ?? ultimo.actualizadoEn;
     if (cambio < desde) return null;
     if (ultimo.estado === 'APROBADO') {
-      return {
-        texto: resumenBorrador(datosDe(ultimo), '✅ Tu factura quedó aprobada'),
-      };
+      const titulo = {
+        PROVEEDOR: '✅ Tu factura quedó aprobada',
+        SIN_FACTURA: '📝 Tu venta quedó registrada sin factura',
+        MANUAL: '📝 Tu venta quedó registrada para facturar a mano',
+      }[ultimo.destinoFactura ?? 'PROVEEDOR'];
+      return { texto: resumenBorrador(datosDe(ultimo), titulo) };
     }
     if (ultimo.estado === 'CANCELADO') {
       return {
@@ -290,29 +406,52 @@ export class ConversacionService {
     return null;
   }
 
-  /** Resumen del borrador y qué hacer después; el botón va solo si es aprobable. */
+  /**
+   * Resumen del borrador y qué hacer después; el botón va solo si es aprobable, y su texto depende
+   * del destino. Los avisos de "no se facturará" y "facturar a mano" van antes del botón.
+   */
   private conResumen(
     fila: Borrador,
     aviso: AvisoResumen,
   ): RespuestaConversacion {
     const borrador = datosDe(fila);
     const aprobable = motivoNoAprobable(borrador) === null;
-    let siguiente = '👉 Toca ✅ Aprobar, escribe una corrección, o "cancelar".';
+    const { destino } = this.destinoActual(borrador);
+    const boton = TEXTO_BOTON[destino];
+    const partes = [resumenBorrador(borrador)];
     if (!aprobable) {
-      siguiente =
-        '✏️ Escribe los datos que faltan o una corrección, o "cancelar".';
-    } else if (aviso === 'usarBoton') {
-      siguiente = '👉 Para aprobar, toca ✅ Aprobar en este mensaje.';
+      partes.push(
+        '✏️ Escribe los datos que faltan o una corrección, o "cancelar".',
+      );
+    } else {
+      if (destino !== 'PROVEEDOR') partes.push(AVISO_DESTINO[destino]);
+      if (aviso === 'usarBoton') {
+        partes.push(`👉 Para seguir, toca ${boton} en este mensaje.`);
+      } else if (destino === 'SIN_FACTURA') {
+        partes.push(
+          `👉 Toca ${boton}, escribe una corrección (o "consumidor final"), o "cancelar".`,
+        );
+      } else {
+        partes.push(`👉 Toca ${boton}, escribe una corrección, o "cancelar".`);
+      }
     }
     let encabezado = '';
     if (aviso === 'noVigente') {
       encabezado = 'Ese resumen ya no está vigente. Este es el actual:\n\n';
     } else if (aviso === 'quieto') {
       encabezado = `Este borrador es del ${fechaCorta(fila.actualizadoEn)}; revísalo y aprueba de nuevo.\n\n`;
+    } else if (aviso === 'destinoCambio') {
+      encabezado =
+        'La conexión con Alegra cambió desde ese resumen, así que no lo aprobé. Este es el actual:\n\n';
     }
     return {
-      texto: `${encabezado}${resumenBorrador(borrador)}\n\n${siguiente}`,
-      mostrar: { borradorId: fila.id, version: fila.version, aprobable },
+      texto: `${encabezado}${partes.join('\n\n')}`,
+      mostrar: {
+        borradorId: fila.id,
+        version: fila.version,
+        aprobable,
+        destino,
+      },
     };
   }
 
@@ -326,10 +465,15 @@ export class ConversacionService {
     porVoz: boolean,
   ): Promise<Escritura> {
     const actual = datosDe(pendiente);
-    const borrador = conOrigenDeIdentificacion(
+    const borrador = conMarcaDeVaciado(
       actual,
-      await this.interprete.interpretar(texto, actual),
-      porVoz,
+      sinNombreConsumidorFinal(
+        conOrigenDeIdentificacion(
+          actual,
+          await this.interprete.interpretar(texto, actual),
+          porVoz,
+        ),
+      ),
     );
     const quitados = itemsQuitadosSinPedir(actual, borrador, texto);
     const reemplazados = itemsReemplazadosSinPedir(actual, borrador, texto);
@@ -406,7 +550,9 @@ export class ConversacionService {
       );
     }
     return {
-      borrador: conOrigenDeIdentificacion(undefined, borrador, porVoz),
+      borrador: sinNombreConsumidorFinal(
+        conOrigenDeIdentificacion(undefined, borrador, porVoz),
+      ),
       vaciados,
     };
   }
@@ -508,6 +654,18 @@ function avisoDescartada({
     'No cambié el borrador. Si eso era lo que querías, escríbelo con el nombre del producto (por ejemplo, "quita la brocha" o "la brocha a 15 mil"); si no, escribe la corrección de nuevo.',
   );
   return lineas.join('\n');
+}
+
+/** Título del resumen al aprobar, según el destino. */
+function tituloAprobado(destino: DestinoFactura): string {
+  switch (destino) {
+    case 'PROVEEDOR':
+      return '✅ Factura aprobada';
+    case 'SIN_FACTURA':
+      return '📝 Venta registrada sin factura';
+    case 'MANUAL':
+      return '📝 Venta registrada para facturar a mano';
+  }
 }
 
 function quieto(fila: Borrador): boolean {

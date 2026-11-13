@@ -4,6 +4,9 @@
 import 'dotenv/config';
 import type { ConfigService } from '@nestjs/config';
 import type { Env } from '../config/env.schema.js';
+import { ORG_FICTICIA } from '../emision/alegra/token-ficticio.spec-util.js';
+import { configEmisionFalsa } from '../emision/config-emision.spec-util.js';
+import { diaDeColombia, diaDeFechaGuardada } from '../emision/fecha-factura.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { ConversacionService } from './conversacion.service.js';
 import type { BorradorFactura } from './factura.js';
@@ -30,17 +33,25 @@ const db = new PrismaService(config);
 const interprete = {
   interpretar: vi.fn().mockResolvedValue(borrador),
 } as unknown as InterpreteTextoService;
-const servicio = new ConversacionService(db, interprete);
+const servicio = new ConversacionService(db, interprete, configEmisionFalsa());
+
+/** Venta sin nombre ni identificación: consumidor final. */
+const consumidorFinal: BorradorFactura = {
+  cliente: { nombre: null, identificacion: null },
+  items: [{ descripcion: 'vinilo', valor: 50000 }],
+  totalEscrito: null,
+};
 
 async function crearPendiente(
   chatId: number,
   version: number,
   versionMostrada: number | null,
+  datos: BorradorFactura = borrador,
 ) {
   const fila = await db.borrador.create({
     data: {
       chatId: BigInt(chatId),
-      datos: borrador as object,
+      datos: datos as object,
       version,
       versionMostrada,
     },
@@ -103,7 +114,7 @@ describe('aprobación por versión contra PostgreSQL', () => {
 
     await servicio.marcarMostrada(id, 1);
     const si = await servicio.responder(CHAT_A, 'sí');
-    expect(si.texto).toContain('toca ✅ Aprobar');
+    expect(si.texto).toContain('toca 📝 Registrar sin factura');
     expect((await estadoDe(id)).estado).toBe('PENDIENTE');
 
     const respuesta = await servicio.aprobar(
@@ -111,18 +122,104 @@ describe('aprobación por versión contra PostgreSQL', () => {
       {
         borradorId: id,
         version: 1,
+        destino: 'SIN_FACTURA' as const,
       },
       USUARIO,
     );
 
-    expect(respuesta.texto).toContain('aprobada');
+    expect(respuesta.texto).toContain('Venta registrada sin factura');
     expect((await estadoDe(id)).estado).toBe('APROBADO');
     const guardado = await db.borrador.findUniqueOrThrow({
       where: { id },
-      select: { aprobadoPor: true, aprobadoEn: true },
+      select: {
+        aprobadoPor: true,
+        aprobadoEn: true,
+        destinoFactura: true,
+        emision: true,
+      },
     });
     expect(guardado.aprobadoPor).toBe(BigInt(USUARIO));
     expect(guardado.aprobadoEn).toBeInstanceOf(Date);
+    // Con NIT no se factura desde el bot: sin emisión.
+    expect(guardado.destinoFactura).toBe('SIN_FACTURA');
+    expect(guardado.emision).toBeNull();
+  });
+
+  it('consumidor final con token válido: APROBADO con destino PROVEEDOR y la emisión PENDIENTE', async () => {
+    const fila = await crearPendiente(CHAT_A, 1, 1, consumidorFinal);
+
+    const respuesta = await servicio.aprobar(
+      CHAT_A,
+      { borradorId: fila.id, version: 1, destino: 'PROVEEDOR' },
+      USUARIO,
+    );
+
+    expect(respuesta.texto).toMatch(
+      /^✅ Factura aprobada\nCliente: consumidor final/,
+    );
+    const guardado = await db.borrador.findUniqueOrThrow({
+      where: { id: fila.id },
+      include: { emision: true },
+    });
+    expect(guardado.destinoFactura).toBe('PROVEEDOR');
+    expect(guardado.emision).toMatchObject({
+      estado: 'PENDIENTE',
+      proveedor: 'ALEGRA',
+      cuentaProveedor: ORG_FICTICIA,
+      modo: 'SOLO_BORRADOR',
+      idExterno: null,
+    });
+    // El día de Colombia, leído en UTC.
+    expect(diaDeFechaGuardada(guardado.emision!.fechaFactura)).toBe(
+      diaDeColombia(guardado.aprobadoEn!),
+    );
+  });
+
+  it('sin token válido: APROBADO con destino MANUAL y sin emisión', async () => {
+    const sinToken = new ConversacionService(
+      db,
+      interprete,
+      configEmisionFalsa({ tokenValido: false }),
+    );
+    const fila = await crearPendiente(CHAT_A, 1, 1, consumidorFinal);
+
+    const respuesta = await sinToken.aprobar(
+      CHAT_A,
+      { borradorId: fila.id, version: 1, destino: 'MANUAL' },
+      USUARIO,
+    );
+
+    expect(respuesta.texto).toMatch(
+      /^📝 Venta registrada para facturar a mano/,
+    );
+    const guardado = await db.borrador.findUniqueOrThrow({
+      where: { id: fila.id },
+      include: { emision: true },
+    });
+    expect(guardado).toMatchObject({
+      estado: 'APROBADO',
+      destinoFactura: 'MANUAL',
+      emision: null,
+    });
+  });
+
+  it('el botón de ✅ Aprobar con el token ya vencido no aprueba: reenvía el resumen', async () => {
+    const sinToken = new ConversacionService(
+      db,
+      interprete,
+      configEmisionFalsa({ tokenValido: false }),
+    );
+    const fila = await crearPendiente(CHAT_A, 1, 1, consumidorFinal);
+
+    const respuesta = await sinToken.aprobar(
+      CHAT_A,
+      { borradorId: fila.id, version: 1, destino: 'PROVEEDOR' },
+      USUARIO,
+    );
+
+    expect(respuesta.mostrar?.destino).toBe('MANUAL');
+    expect(await estadoDe(fila.id)).toMatchObject({ estado: 'PENDIENTE' });
+    expect(await db.emision.count({ where: { borradorId: fila.id } })).toBe(0);
   });
 
   it('version 2, versionMostrada 1, botón de la 2: no aprueba y la fila sigue PENDIENTE', async () => {
@@ -133,6 +230,7 @@ describe('aprobación por versión contra PostgreSQL', () => {
       {
         borradorId: fila.id,
         version: 2,
+        destino: 'SIN_FACTURA' as const,
       },
       USUARIO,
     );
@@ -159,6 +257,7 @@ describe('aprobación por versión contra PostgreSQL', () => {
       {
         borradorId: a.id,
         version: 1,
+        destino: 'SIN_FACTURA' as const,
       },
       USUARIO,
     );
@@ -177,13 +276,13 @@ describe('aprobación por versión contra PostgreSQL', () => {
     const fila = await crearPendiente(CHAT_A, 1, 1);
     await servicio.aprobar(
       CHAT_A,
-      { borradorId: fila.id, version: 1 },
+      { borradorId: fila.id, version: 1, destino: 'SIN_FACTURA' as const },
       USUARIO,
     );
 
     const estado = await servicio.estadoTrasFallo(CHAT_A, desde);
 
-    expect(estado?.texto).toContain('✅ Tu factura quedó aprobada');
+    expect(estado?.texto).toContain('📝 Tu venta quedó registrada sin factura');
     // Si el trabajo cortado es posterior a la aprobación, no hay nada que decir.
     expect(
       await servicio.estadoTrasFallo(CHAT_A, new Date(Date.now() + 60_000)),
@@ -199,6 +298,7 @@ describe('aprobación por versión contra PostgreSQL', () => {
       borradorId: fila.id,
       version: 2,
       aprobable: true,
+      destino: 'SIN_FACTURA',
     });
   });
 
@@ -219,6 +319,7 @@ describe('aprobación por versión contra PostgreSQL', () => {
       borradorId: fila.id,
       version: 2,
       aprobable: true,
+      destino: 'SIN_FACTURA',
     });
     expect(await estadoDe(fila.id)).toMatchObject({
       version: 2,
@@ -264,7 +365,11 @@ describe('aprobación por versión contra PostgreSQL', () => {
   it('borrador quieto: el botón viejo reenvía el resumen y el botón nuevo sí aprueba', async () => {
     const fila = await crearPendiente(CHAT_A, 1, 1);
     await envejecer(fila.id);
-    const vista = { borradorId: fila.id, version: 1 };
+    const vista = {
+      borradorId: fila.id,
+      version: 1,
+      destino: 'SIN_FACTURA' as const,
+    };
 
     const reenvio = await servicio.aprobar(CHAT_A, vista, USUARIO);
     expect(reenvio.texto).toContain('revísalo y aprueba de nuevo');
@@ -274,13 +379,14 @@ describe('aprobación por versión contra PostgreSQL', () => {
     await servicio.marcarMostrada(fila.id, 1);
     const respuesta = await servicio.aprobar(CHAT_A, vista, USUARIO);
 
-    expect(respuesta.texto).toContain('aprobada');
+    expect(respuesta.texto).toContain('registrada sin factura');
     expect((await estadoDe(fila.id)).estado).toBe('APROBADO');
   });
 
-  it('si la versión cambia entre la lectura y el updateMany, no aprueba (count 0)', async () => {
-    // En la base ya hay una corrección mostrada (v2), pero la lectura del botón vio la v1.
-    const fila = await crearPendiente(CHAT_B, 2, 2);
+  it('si la versión cambia entre la lectura y el updateMany, no aprueba ni nace la emisión (count 0)', async () => {
+    // En la base ya hay una corrección mostrada (v2), pero la lectura del botón vio la v1. Consumidor
+    // final con token válido: si aprobara, nacería una emisión.
+    const fila = await crearPendiente(CHAT_B, 2, 2, consumidorFinal);
     const lecturaVieja = { ...fila, version: 1, versionMostrada: 1 };
     const prismaConLecturaVieja = {
       borrador: {
@@ -294,23 +400,25 @@ describe('aprobación por versión contra PostgreSQL', () => {
         updateMany: (args: Parameters<typeof db.borrador.updateMany>[0]) =>
           db.borrador.updateMany(args),
       },
+      // La transacción es la real: el updateMany condicionado no cambia ninguna fila.
+      $transaction: (fn: Parameters<typeof db.$transaction>[0]) =>
+        db.$transaction(fn),
     } as unknown as PrismaService;
     const conCarrera = new ConversacionService(
       prismaConLecturaVieja,
       interprete,
+      configEmisionFalsa(),
     );
 
     const respuesta = await conCarrera.aprobar(
       CHAT_B,
-      {
-        borradorId: fila.id,
-        version: 1,
-      },
+      { borradorId: fila.id, version: 1, destino: 'PROVEEDOR' },
       USUARIO,
     );
 
     expect(respuesta.texto).not.toContain('aprobada');
     expect(respuesta.texto).toContain('ya no está vigente');
     expect((await estadoDe(fila.id)).estado).toBe('PENDIENTE');
+    expect(await db.emision.count({ where: { borradorId: fila.id } })).toBe(0);
   });
 });

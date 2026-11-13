@@ -2,7 +2,10 @@ import type { AvisoTokenService } from '../emision/alegra/aviso-token.service.js
 import { Logger } from '@nestjs/common';
 import type { ConfigService } from '@nestjs/config';
 import type { Env } from '../config/env.schema.js';
-import type { ConversacionService } from '../facturacion/conversacion.service.js';
+import type {
+  ConversacionService,
+  VistaBorrador,
+} from '../facturacion/conversacion.service.js';
 import type { TranscriptorService } from '../voz/transcriptor.service.js';
 import {
   type ColaMensajesService,
@@ -24,9 +27,10 @@ import {
 const CHAT = 4242; // chat ficticio
 const UPDATE = 9001;
 /** Borrador y versión del botón (uuid ficticio). */
-const VISTA = {
+const VISTA: VistaBorrador = {
   borradorId: '01900000-0000-7000-8000-000000000001',
   version: 1,
+  destino: 'PROVEEDOR',
 };
 
 /** El cableado de grammY no se prueba: se llama directo a los métodos del handler. */
@@ -192,18 +196,30 @@ describe('TelegramService: botón "✅ Aprobar"', () => {
   it('los datos del botón van y vuelven, y caben en los 64 bytes de la Bot API', () => {
     const datos = datosBotonAprobar(VISTA);
 
-    expect(datos).toBe(`a:${VISTA.borradorId}:1`);
+    expect(datos).toBe(`a:${VISTA.borradorId}:1:P`);
     expect(leerBotonAprobar(datos)).toEqual(VISTA);
     const maximo = datosBotonAprobar({ ...VISTA, version: 999_999 });
     expect(Buffer.byteLength(maximo, 'utf8')).toBeLessThanOrEqual(64);
   });
 
   it.each([
-    ['otro prefijo', `n:${VISTA.borradorId}:1`],
-    ['id que no es uuid', 'a:b1:1'],
-    ['versión 0', `a:${VISTA.borradorId}:0`],
-    ['versión con letras', `a:${VISTA.borradorId}:1x`],
-    ['versión de 7 dígitos', `a:${VISTA.borradorId}:1000000`],
+    ['MANUAL', 'M'],
+    ['SIN_FACTURA', 'S'],
+  ] as const)('el destino %s va como %s y vuelve', (destino, letra) => {
+    const datos = datosBotonAprobar({ ...VISTA, destino });
+
+    expect(datos).toBe(`a:${VISTA.borradorId}:1:${letra}`);
+    expect(leerBotonAprobar(datos)).toEqual({ ...VISTA, destino });
+  });
+
+  it.each([
+    ['otro prefijo', `n:${VISTA.borradorId}:1:P`],
+    ['id que no es uuid', 'a:b1:1:P'],
+    ['versión 0', `a:${VISTA.borradorId}:0:P`],
+    ['versión con letras', `a:${VISTA.borradorId}:1x:P`],
+    ['versión de 7 dígitos', `a:${VISTA.borradorId}:1000000:P`],
+    ['destino desconocido', `a:${VISTA.borradorId}:1:X`],
+    ['botón de antes del destino', `a:${VISTA.borradorId}:1`],
     ['vacío', ''],
   ])('rechaza datos alterados (%s)', (_caso, datos) => {
     expect(leerBotonAprobar(datos)).toBeNull();
@@ -242,10 +258,10 @@ describe('TelegramService: botón "✅ Aprobar"', () => {
   });
 
   it.each([
-    ['datos alterados', 'a:b1:1', 77],
+    ['datos alterados', 'a:b1:1:P', 77],
     [
       'sin mensaje (botón de un mensaje que ya no existe)',
-      `a:${VISTA.borradorId}:1`,
+      `a:${VISTA.borradorId}:1:P`,
       undefined,
     ],
   ])(
@@ -298,16 +314,32 @@ describe('TelegramService: botón "✅ Aprobar"', () => {
     const sendMessage = vi.fn().mockResolvedValue({ message_id: 1 });
     api.sendMessage = sendMessage;
 
+    const sinFactura = { ...VISTA, destino: 'SIN_FACTURA' } as const;
+    const aMano = { ...VISTA, destino: 'MANUAL' } as const;
     await servicio.enviar(CHAT, 'Resumen', VISTA);
     await servicio.enviar(CHAT, 'Sin botón', null);
+    await servicio.enviar(CHAT, 'Con cédula', sinFactura);
+    await servicio.enviar(CHAT, 'Sin token', aMano);
 
-    const markup = sendMessage.mock.calls[0][2].reply_markup as {
-      inline_keyboard: { text: string; callback_data: string }[][];
-    };
-    expect(markup.inline_keyboard).toEqual([
+    const teclado = (i: number) =>
+      (
+        sendMessage.mock.calls[i][2].reply_markup as {
+          inline_keyboard: { text: string; callback_data: string }[][];
+        }
+      ).inline_keyboard;
+    expect(teclado(0)).toEqual([
       [{ text: '✅ Aprobar', callback_data: datosBotonAprobar(VISTA) }],
     ]);
     expect(sendMessage.mock.calls[1][2]).toBeUndefined();
+    expect(teclado(2)).toEqual([
+      [
+        {
+          text: '📝 Registrar sin factura',
+          callback_data: datosBotonAprobar(sinFactura),
+        },
+      ],
+    ]);
+    expect(teclado(3)[0][0].text).toBe('📝 Registrar para facturar a mano');
   });
 
   it('quitarBoton deja el mensaje sin teclado', async () => {
