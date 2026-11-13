@@ -70,6 +70,19 @@ export interface RefFactura {
   referencia: string;
 }
 
+/**
+ * Búsqueda de nuestras facturas para reconciliar una emisión DESCONOCIDO (§4): por cliente y fecha,
+ * y la referencia se compara exacta de nuestro lado (el filtro del proveedor no es de fiar).
+ */
+export interface BusquedaPorReferencia {
+  cuenta: string;
+  /** "facturabot:<emisionId>". */
+  referencia: string;
+  /** Días (AAAA-MM-DD) donde buscar: la fecha original de la emisión y el día siguiente. */
+  fechas: string[];
+  cliente: { tipo: 'consumidor_final' };
+}
+
 export type ResultadoTimbrado =
   | { resultado: 'timbrada' }
   /** El proveedor dice que ya estaba timbrada (repetir el timbrado no duplica). */
@@ -140,4 +153,12 @@ export interface ProveedorFacturacion {
   /** Timbra ante la DIAN la factura creada por `crearBorrador`. */
   timbrar(ref: RefFactura, modo: ModoEmision): Promise<ResultadoTimbrado>;
   consultar(ref: Omit<RefFactura, 'referencia'>): Promise<FacturaProveedor>;
+  /**
+   * Solo lectura. Todas las facturas de esas fechas cuya referencia es exactamente la pedida: una
+   * lista vacía significa que se leyeron **todas** las páginas y no apareció. Si algo no se pudo
+   * leer, lanza un error incierto (nunca devuelve "no está" por una lectura a medias).
+   */
+  buscarPorReferencia(
+    busqueda: BusquedaPorReferencia,
+  ): Promise<FacturaProveedor[]>;
 }

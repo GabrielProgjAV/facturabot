@@ -6,6 +6,8 @@ import type { AddressInfo } from 'node:net';
 export interface PedidoRecibido {
   metodo: string;
   ruta: string;
+  /** La consulta (lo que va después de "?"), para probar filtros y paginación. */
+  consulta: URLSearchParams;
   autorizacion: string | undefined;
   cuerpo: unknown;
 }
@@ -65,11 +67,13 @@ export class AlegraFalso {
       let datos = '';
       req.on('data', (parte: Buffer) => (datos += parte.toString()));
       req.on('end', () => {
-        const ruta = (req.url ?? '').split('?')[0].replace(/^\/api\/v1/, '');
+        const [camino, consulta = ''] = (req.url ?? '').split('?');
+        const ruta = camino.replace(/^\/api\/v1/, '');
         const metodo = req.method ?? '';
         this.pedidos.push({
           metodo,
           ruta,
+          consulta: new URLSearchParams(consulta),
           autorizacion: req.headers.authorization,
           cuerpo: datos ? (JSON.parse(datos) as unknown) : undefined,
         });

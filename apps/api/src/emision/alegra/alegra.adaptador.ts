@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import {
+  type BusquedaPorReferencia,
   type CategoriaErrorProveedor,
   type EstadoDian,
   ErrorProveedor,
@@ -14,8 +15,8 @@ import { estadoTokenAlegra } from './token-alegra.js';
 
 /**
  * Adaptador de Alegra (docs/planes/fase-5-alegra.md §4 y §5). Mínimo a propósito (el proveedor
- * final del piloto será probablemente Siigo): consumidor final, crear borrador, timbrar y
- * consultar. Todo lo de Alegra vive aquí; afuera solo se ve el puerto.
+ * final del piloto será probablemente Siigo): consumidor final, crear borrador, timbrar,
+ * consultar y buscar por referencia. Todo lo de Alegra vive aquí; afuera solo se ve el puerto.
  *
  * Garantías: nunca envía `stamp` al crear; solo timbra con ALEGRA_EMITIR encendida, una emisión
  * TIMBRAR y una factura que tenga nuestra referencia; y nunca toca una factura de otra cuenta.
@@ -99,6 +100,25 @@ const facturaEntradaSchema = z.object({
     )
     .min(1),
 });
+
+/** La búsqueda, validada al entrar: sale de la BD. Hasta 3 días (la fecha original y la siguiente). */
+const busquedaSchema = z.object({
+  cuenta: z.string().min(1),
+  referencia: z.string().regex(/^facturabot:[0-9a-f-]{36}$/),
+  fechas: z
+    .array(z.string().regex(/^\d{4}-\d{2}-\d{2}$/))
+    .min(1)
+    .max(3),
+  cliente: z.object({ tipo: z.literal('consumidor_final') }),
+});
+
+/** Facturas por página al listar (el máximo de `limit` en GET /invoices, 🔴 sin confirmar). */
+const POR_PAGINA = 30;
+/**
+ * Tope de páginas por día (1.500 facturas a consumidor final en un día). Pasarlo es incierto: se
+ * lanza un error en vez de responder "no está" sin haber leído todo.
+ */
+const MAXIMO_PAGINAS = 50;
 
 /** Un error de Alegra con la forma conocida, sin id de factura: no se creó nada. */
 const errorAlegraSchema = z
@@ -332,6 +352,49 @@ export class AlegraAdaptador implements ProveedorFacturacion {
     if (factura.idExterno !== id)
       throw new ErrorProveedor('respuesta_invalida');
     return factura;
+  }
+
+  /**
+   * Solo GET: lista las facturas a consumidor final de cada fecha, todas las páginas, y se queda con
+   * las que tienen exactamente nuestra referencia en `observations` (el filtro de Alegra por
+   * `observations` se ignora: investigación del 2026-11-04). Nunca crea ni timbra nada.
+   */
+  async buscarPorReferencia(
+    busqueda: BusquedaPorReferencia,
+  ): Promise<FacturaProveedor[]> {
+    if (!busquedaSchema.safeParse(busqueda).success) {
+      throw new ErrorProveedor('rechazo_validacion');
+    }
+    // Una fila de otra cuenta no causa ni un GET.
+    if (busqueda.cuenta !== this.cuenta()) {
+      throw new ErrorProveedor('otra_cuenta');
+    }
+    const encontradas = new Map<string, FacturaProveedor>();
+    for (const fecha of new Set(busqueda.fechas)) {
+      for (let pagina = 0; ; pagina++) {
+        if (pagina >= MAXIMO_PAGINAS) {
+          throw new ErrorProveedor('respuesta_invalida');
+        }
+        const consulta = new URLSearchParams({
+          date: fecha,
+          client_identification: CONSUMIDOR_FINAL,
+          start: String(pagina * POR_PAGINA),
+          limit: String(POR_PAGINA),
+        });
+        const facturas = this.validar(
+          await this.pedir('GET', `/invoices?${consulta}`),
+          z.array(facturaSchema).max(POR_PAGINA),
+        );
+        for (const datos of facturas) {
+          // Exacta y sin recortar: "facturabot:<id> " o "facturabot:<id>-x" no son nuestras.
+          if (datos.observations === busqueda.referencia) {
+            encontradas.set(datos.id, aFactura(datos));
+          }
+        }
+        if (facturas.length < POR_PAGINA) break;
+      }
+    }
+    return [...encontradas.values()];
   }
 
   /** El id en forma canónica, si la referencia es de la cuenta del token actual. */

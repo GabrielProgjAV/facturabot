@@ -25,6 +25,7 @@ export function configEmisionFalsa(
     crearBorrador: noSeUsa,
     timbrar: noSeUsa,
     consultar: noSeUsa,
+    buscarPorReferencia: noSeUsa,
   };
   return { proveedor, modo };
 }

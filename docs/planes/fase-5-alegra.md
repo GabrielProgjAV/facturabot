@@ -471,6 +471,19 @@ mensaje completo es un comando (sin IA). `borradores.datos.cliente.vaciado` marc
 "consumidor final". La emisión nace con el proveedor de `CONFIG_EMISION` (Alegra, desde el .env).
 Con el punto 4 pendiente, la emisión queda en PENDIENTE: nadie la procesa todavía.
 
+**Punto 3 hecho (2026-11-12):** `buscarPorReferencia({ cuenta, referencia, fechas, cliente })` en el
+puerto y en el adaptador. Solo `GET /invoices?date=…&client_identification=222222222222&start=…&limit=30`
+por fecha, todas las páginas (tope de 50 por día), Zod por página; `observations` se compara exacto y
+sin recortar, de nuestro lado. Otra cuenta o entrada inválida: ni un GET. Una página que falla o el
+tope superado lanzan un error incierto: nunca "no está" por una lectura a medias. Devuelve todas las
+coincidencias (dos = anomalía que decide el servicio, punto 6). Probado solo con el Alegra falso.
+**Por confirmar en la cuenta de prueba (pedirle OK a Gabriel antes; solo GET):** que `start` y
+`limit=30` paginan como se supone y el orden del listado (si entra una factura nueva mientras se
+pagina, ¿se corre una de una página a otra?). Consulta propuesta: `GET /invoices` con `date` de un día
+con facturas de prueba y `client_identification=222222222222`, `start=0` y `start=30`.
+
+**Sigue:** punto 4 (trabajo `emitir`), con el segundo mensaje con el resultado.
+
 **Chat de administrador (propuesta de Gabriel, 2026-11-12; pendiente de su OK, no implementado):**
 una variable `TELEGRAM_ADMIN_ID` con el id de Telegram de Gabriel, adonde van todos los avisos
 técnicos (token por vencer, conexión caída, emisión trabada), separados del chat de las ventas. Hoy

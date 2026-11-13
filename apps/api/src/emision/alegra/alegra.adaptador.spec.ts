@@ -591,3 +591,167 @@ describe('AlegraAdaptador: revisión de seguridad del PR (clasificación sin dup
     );
   });
 });
+
+describe('AlegraAdaptador.buscarPorReferencia (solo lectura)', () => {
+  const BUSQUEDA = {
+    cuenta: ORG_FICTICIA,
+    referencia: REFERENCIA,
+    fechas: ['2026-11-12', '2026-11-13'],
+    cliente: { tipo: 'consumidor_final' as const },
+  };
+  /** Otra factura del mismo día y cliente, que no es nuestra. */
+  const ajena = (
+    id: string,
+    observations: string | null = 'venta de mostrador',
+  ) => borradorAlegra({ id, observations });
+
+  it('lista por cliente y fecha con GET y se queda solo con la referencia exacta', async () => {
+    alegra.responder('GET /invoices', {
+      status: 200,
+      cuerpo: [
+        ajena('1'),
+        // Parecidas pero no iguales: no son nuestras.
+        ajena('2', `${REFERENCIA} `),
+        ajena('3', `${REFERENCIA}-x`),
+        ajena('4', REFERENCIA.toUpperCase()),
+        ajena('5', null),
+        borradorAlegra({ id: '007' }),
+      ],
+    });
+
+    const encontradas = await adaptador().buscarPorReferencia(BUSQUEDA);
+
+    expect(encontradas.map((f) => f.idExterno)).toEqual(['7']);
+    expect(encontradas[0].referencia).toBe(REFERENCIA);
+    // Una consulta por fecha, todas GET, con el filtro de cliente y fecha.
+    expect(alegra.pedidos.every((p) => p.metodo === 'GET')).toBe(true);
+    expect(
+      alegra.pedidos.map((p) => [
+        p.consulta.get('date'),
+        p.consulta.get('client_identification'),
+        p.consulta.get('start'),
+      ]),
+    ).toEqual([
+      ['2026-11-12', '222222222222', '0'],
+      ['2026-11-13', '222222222222', '0'],
+    ]);
+  });
+
+  it('recorre todas las páginas: la nuestra puede estar en la segunda', async () => {
+    const llena = Array.from({ length: 30 }, (_, i) => ajena(String(100 + i)));
+    alegra.responder(
+      'GET /invoices',
+      { status: 200, cuerpo: llena },
+      { status: 200, cuerpo: [borradorAlegra({ id: '007' })] },
+      { status: 200, cuerpo: [] },
+    );
+
+    const encontradas = await adaptador().buscarPorReferencia({
+      ...BUSQUEDA,
+      fechas: ['2026-11-12'],
+    });
+
+    expect(encontradas.map((f) => f.idExterno)).toEqual(['7']);
+    expect(alegra.pedidos.map((p) => p.consulta.get('start'))).toEqual([
+      '0',
+      '30',
+    ]);
+  });
+
+  it('nada: lista vacía después de leer todo', async () => {
+    alegra.responder('GET /invoices', { status: 200, cuerpo: [ajena('1')] });
+
+    expect(await adaptador().buscarPorReferencia(BUSQUEDA)).toEqual([]);
+  });
+
+  it('dos facturas con nuestra referencia: devuelve las dos (el servicio decide)', async () => {
+    alegra.responder('GET /invoices', {
+      status: 200,
+      cuerpo: [borradorAlegra({ id: '7' }), borradorAlegra({ id: '8' })],
+    });
+
+    const encontradas = await adaptador().buscarPorReferencia({
+      ...BUSQUEDA,
+      fechas: ['2026-11-12'],
+    });
+
+    expect(encontradas.map((f) => f.idExterno)).toEqual(['7', '8']);
+  });
+
+  it('otra cuenta: no hace ni un GET', async () => {
+    const error = await errorDe(
+      adaptador().buscarPorReferencia({
+        ...BUSQUEDA,
+        cuenta: OTRA_ORG_FICTICIA,
+      }),
+    );
+
+    expect(error.categoria).toBe('otra_cuenta');
+    expect(alegra.pedidos).toHaveLength(0);
+  });
+
+  it.each([
+    ['referencia ajena', { referencia: 'otra-cosa' }],
+    ['sin fechas', { fechas: [] }],
+    ['fecha mal formada', { fechas: ['12/11/2026'] }],
+    ['cliente identificado', { cliente: { tipo: 'nit' } }],
+  ])('entrada inválida (%s): no hace ni un GET', async (_caso, cambio) => {
+    const error = await errorDe(
+      adaptador().buscarPorReferencia({
+        ...BUSQUEDA,
+        ...cambio,
+      } as unknown as typeof BUSQUEDA),
+    );
+
+    expect(error.categoria).toBe('rechazo_validacion');
+    expect(alegra.pedidos).toHaveLength(0);
+  });
+
+  it.each([
+    ['500', { status: 500, cuerpo: { message: 'x' } }, 'error_servidor'],
+    [
+      'respuesta que no es lista',
+      { status: 200, cuerpo: { data: [] } },
+      'respuesta_invalida',
+    ],
+    [
+      'página con más de 30',
+      {
+        status: 200,
+        cuerpo: Array.from({ length: 31 }, (_, i) => ajena(String(i + 1))),
+      },
+      'respuesta_invalida',
+    ],
+  ])(
+    'si una página falla (%s), es incierto: nunca "no está"',
+    async (_caso, respuesta, categoria) => {
+      alegra.responder('GET /invoices', { status: 200, cuerpo: [] }, respuesta);
+
+      const error = await errorDe(adaptador().buscarPorReferencia(BUSQUEDA));
+
+      expect(error.categoria).toBe(categoria);
+      expect(error.definitivo).toBe(false);
+    },
+  );
+
+  it('más páginas que el tope: es incierto, no "no está"', async () => {
+    const llena = Array.from({ length: 30 }, (_, i) => ajena(String(100 + i)));
+    alegra.responder('GET /invoices', { status: 200, cuerpo: llena });
+
+    const error = await errorDe(
+      adaptador().buscarPorReferencia({ ...BUSQUEDA, fechas: ['2026-11-12'] }),
+    );
+
+    expect(error.categoria).toBe('respuesta_invalida');
+    expect(alegra.pedidos).toHaveLength(50);
+  });
+
+  it('el token no aparece en el error', async () => {
+    alegra.responder('GET /invoices', { status: 500, cuerpo: {} });
+
+    const error = await errorDe(adaptador().buscarPorReferencia(BUSQUEDA));
+
+    expect(JSON.stringify(error)).not.toContain(TOKEN);
+    expect(error.message).not.toContain(TOKEN);
+  });
+});
