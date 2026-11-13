@@ -4,7 +4,10 @@ import {
   type ConfigEmision,
 } from '../emision/config-emision.js';
 import { fechaFacturaParaGuardar } from '../emision/fecha-factura.js';
-import { ErrorProveedor } from '../emision/proveedor-facturacion.js';
+import {
+  ErrorProveedor,
+  NOMBRE_PARA_USUARIO,
+} from '../emision/proveedor-facturacion.js';
 import { Prisma } from '../generated/prisma/client.js';
 import type { Borrador } from '../generated/prisma/client.js';
 import type { DestinoFactura } from '../generated/prisma/enums.js';
@@ -87,13 +90,19 @@ export const TEXTO_BOTON: Record<DestinoFactura, string> = {
   MANUAL: '📝 Registrar para facturar a mano',
 };
 
-/** Avisos que van en el resumen, antes del botón, cuando la venta no se emitirá desde el bot. */
-export const AVISO_DESTINO = {
-  SIN_FACTURA:
-    '⚠️ Esta venta tiene NIT o cédula. Por ahora el bot solo factura a consumidor final: esta venta no se facturará desde aquí. Si el cliente necesita la factura, hazla a mano en Alegra.',
-  MANUAL:
-    '⚠️ La conexión con Alegra no está lista (el token falta, venció o no es válido). Si la registras, esta venta queda para facturar a mano en Alegra, y el bot no la emitirá después, aunque se arregle el token.',
-} as const;
+/**
+ * Avisos que van en el resumen, antes del botón, cuando la venta no se emitirá desde el bot. Los lee
+ * el comerciante: sin términos técnicos (nada de "token"); el detalle técnico es para el
+ * administrador. `proveedor` es el nombre para el usuario ("Alegra", luego "Siigo").
+ */
+export function avisoDestino(
+  destino: 'SIN_FACTURA' | 'MANUAL',
+  proveedor: string,
+): string {
+  return destino === 'SIN_FACTURA'
+    ? `⚠️ Esta venta tiene NIT o cédula. Por ahora el bot solo factura a consumidor final: esta venta no se facturará desde aquí. Si el cliente necesita la factura, hazla a mano en ${proveedor}.`
+    : `⚠️ Ahora no se pudo conectar con ${proveedor}. Si el cliente necesita la factura ya, regístrala para hacerla a mano. Si puede esperar, escribe "cancelar" y vuelve a intentarlo más tarde.`;
+}
 
 export interface RespuestaConversacion {
   texto: string;
@@ -152,6 +161,11 @@ export class ConversacionService {
     private readonly interprete: InterpreteTextoService,
     @Inject(CONFIG_EMISION) private readonly emision: ConfigEmision,
   ) {}
+
+  /** El proveedor como se le nombra al usuario ("Alegra"): viene del adaptador, nunca fijo. */
+  private get nombreProveedor(): string {
+    return NOMBRE_PARA_USUARIO[this.emision.proveedor.nombre];
+  }
 
   /**
    * Marca la versión como mostrada, solo si el borrador sigue en esa versión.
@@ -338,12 +352,12 @@ export class ConversacionService {
     switch (destino) {
       case 'PROVEEDOR':
         return this.emision.modo === 'TIMBRAR'
-          ? `${resumen}\n\n🧾 Quedó en cola para emitirse en Alegra ante la DIAN.`
-          : `${resumen}\n\n🧾 Quedó en cola para Alegra. Modo de prueba: solo se crea el borrador en Alegra, no se envía a la DIAN.`;
+          ? `${resumen}\n\n🧾 Quedó en cola para emitirse en ${this.nombreProveedor} ante la DIAN.`
+          : `${resumen}\n\n🧾 Quedó en cola para ${this.nombreProveedor}. Modo de prueba: solo se crea el borrador en ${this.nombreProveedor}, no se envía a la DIAN.`;
       case 'SIN_FACTURA':
-        return `${resumen}\n\nNo se facturó desde el bot. Si el cliente necesita la factura, hazla a mano en Alegra.`;
+        return `${resumen}\n\nNo se facturó desde el bot. Si el cliente necesita la factura, hazla a mano en ${this.nombreProveedor}.`;
       case 'MANUAL':
-        return `${resumen}\n\nHazla a mano en Alegra. El bot no la emitirá, ni siquiera cuando se arregle el token.`;
+        return `${resumen}\n\nHazla a mano en ${this.nombreProveedor}. El bot no la va a emitir después, para que no quede repetida.`;
     }
   }
 
@@ -424,7 +438,8 @@ export class ConversacionService {
         '✏️ Escribe los datos que faltan o una corrección, o "cancelar".',
       );
     } else {
-      if (destino !== 'PROVEEDOR') partes.push(AVISO_DESTINO[destino]);
+      if (destino !== 'PROVEEDOR')
+        partes.push(avisoDestino(destino, this.nombreProveedor));
       if (aviso === 'usarBoton') {
         partes.push(`👉 Para seguir, toca ${boton} en este mensaje.`);
       } else if (destino === 'SIN_FACTURA') {
@@ -441,8 +456,7 @@ export class ConversacionService {
     } else if (aviso === 'quieto') {
       encabezado = `Este borrador es del ${fechaCorta(fila.actualizadoEn)}; revísalo y aprueba de nuevo.\n\n`;
     } else if (aviso === 'destinoCambio') {
-      encabezado =
-        'La conexión con Alegra cambió desde ese resumen, así que no lo aprobé. Este es el actual:\n\n';
+      encabezado = `La conexión con ${this.nombreProveedor} cambió desde ese resumen, así que no lo aprobé. Revisa el resumen actual:\n\n`;
     }
     return {
       texto: `${encabezado}${partes.join('\n\n')}`,

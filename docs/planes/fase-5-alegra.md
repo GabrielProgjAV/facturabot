@@ -444,6 +444,10 @@ otro proceso del agente.
    SOLO_BORRADOR termina ahí; paso 2 con hasta 3 intentos, 3226 y RECHAZADA; ningún error de
    `timbrar` o `consultar` devuelve una fila con `id_externo` a PENDIENTE ni a NO_CREADA. Consultas
    diferidas del estado DIAN. Errores solo con `describirError`.
+   **Segundo mensaje (Gabriel, 2026-11-12):** cuando el trabajo termina, el bot le manda al chat de
+   la venta un mensaje con el resultado: emitida con su número, o el problema en palabras simples
+   (qué hacer, sin términos técnicos). "✅ Factura aprobada" nunca es lo último que ve el usuario. El
+   detalle técnico va al administrador (ver "Chat de administrador", abajo).
 5. Recuperación al arrancar con `pg_try_advisory_lock`, filtrando por proveedor, cuenta y modo **en
    la consulta**: PENDIENTE se reencola (más de 2 h → botones "Emitir / Ya la facturé a mano");
    CREANDO_BORRADOR → DESCONOCIDO y se reconcilia; BORRADOR_CREADO (modo real) y TIMBRANDO repiten
@@ -466,6 +470,14 @@ mensaje completo es un comando (sin IA). `borradores.datos.cliente.vaciado` marc
 `sinDatosNoDichos` vació, y se borra cuando el usuario escribe el nombre, la identificación o
 "consumidor final". La emisión nace con el proveedor de `CONFIG_EMISION` (Alegra, desde el .env).
 Con el punto 4 pendiente, la emisión queda en PENDIENTE: nadie la procesa todavía.
+
+**Chat de administrador (propuesta de Gabriel, 2026-11-12; pendiente de su OK, no implementado):**
+una variable `TELEGRAM_ADMIN_ID` con el id de Telegram de Gabriel, adonde van todos los avisos
+técnicos (token por vencer, conexión caída, emisión trabada), separados del chat de las ventas. Hoy
+no existe: `AvisoTokenService.avisoDelDia` antepone el aviso del token (que menciona "token" y el
+`.env`) a la primera respuesta del día en **el mismo chat** donde se registran las ventas, y al
+arrancar lo escribe en el log. Con un borrador MANUAL el usuario ya ve un texto sin términos
+técnicos; falta el aviso al administrador.
 
 **Pendiente agregado (Gabriel, 2026-11-12), entra en los puntos 4 a 6:** una emisión que queda en
 TIMBRANDO o DESCONOCIDO tras agotar los intentos avisa por el chat; nunca se reintenta en silencio

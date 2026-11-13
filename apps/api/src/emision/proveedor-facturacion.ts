@@ -10,6 +10,12 @@
 /** Proveedores que existen en el esquema (mismos valores que el enum ProveedorFacturacion de Prisma). */
 export type NombreProveedor = 'ALEGRA' | 'SIIGO';
 
+/** Cómo se nombra cada proveedor en los mensajes al usuario: ningún texto lo escribe fijo. */
+export const NOMBRE_PARA_USUARIO: Record<NombreProveedor, string> = {
+  ALEGRA: 'Alegra',
+  SIIGO: 'Siigo',
+};
+
 /** Con qué valor de la bandera de emisión nació una emisión (enum ModoEmision de Prisma). */
 export type ModoEmision = 'SOLO_BORRADOR' | 'TIMBRAR';
 

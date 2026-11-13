@@ -103,7 +103,8 @@ export const MENSAJES_RECEPCION = {
   redisCaido:
     '⚠️ No pude recibir tu mensaje ahora. Intenta de nuevo en unos minutos.',
   procesandoBoton: 'Procesando…',
-  botonInvalido: 'Ese botón no es válido.',
+  botonInvalido:
+    'Ese botón es de un resumen anterior. Mira el último resumen o escribe la venta de nuevo.',
   noAutorizado: 'No estás autorizado para usar este bot.',
   textoLargo: `El mensaje es muy largo (máx. ${LIMITE_TEXTO.toLocaleString('es-CO')} caracteres). Divídelo o resúmelo.`,
   vozLarga: MENSAJES_FALLA.vozLarga,

@@ -693,9 +693,15 @@ describe('ConversacionService', () => {
 
       const resumen = await servicio.responder(42, 'sí');
       expect(resumen.mostrar?.destino).toBe('MANUAL');
-      expect(resumen.texto.indexOf('⚠️ La conexión con Alegra')).toBeLessThan(
+      const aviso = resumen.texto.indexOf(
+        '⚠️ Ahora no se pudo conectar con Alegra. Si el cliente necesita la factura ya, regístrala para hacerla a mano. Si puede esperar, escribe "cancelar" y vuelve a intentarlo más tarde.',
+      );
+      expect(aviso).toBeGreaterThan(-1);
+      expect(aviso).toBeLessThan(
         resumen.texto.indexOf('📝 Registrar para facturar a mano'),
       );
+      // Lo lee el comerciante: sin términos técnicos.
+      expect(resumen.texto).not.toMatch(/token/i);
 
       const respuesta = await servicio.aprobar(
         42,
@@ -713,6 +719,18 @@ describe('ConversacionService', () => {
       expect(respuesta.texto).toMatch(
         /^📝 Venta registrada para facturar a mano/,
       );
+      expect(respuesta.texto).not.toMatch(/token/i);
+    });
+
+    it('el nombre del proveedor sale del adaptador, no está fijo en los textos', async () => {
+      const siigo = configEmisionFalsa({ tokenValido: false });
+      (siigo.proveedor as { nombre: string }).nombre = 'SIIGO';
+      const { servicio } = crear(fila({ datos: consumidorFinal }), siigo);
+
+      const resumen = await servicio.responder(42, 'sí');
+
+      expect(resumen.texto).toContain('conectar con Siigo');
+      expect(resumen.texto).not.toContain('Alegra');
     });
 
     it('con NIT o cédula: aviso de "no se facturará" antes del botón 📝 Registrar sin factura', async () => {
@@ -763,9 +781,16 @@ describe('ConversacionService', () => {
         }),
       );
 
-      await servicio.responder(42, 'Consumidor final.');
+      const respuesta = await servicio.responder(42, 'Consumidor final.');
 
       expect(interprete.interpretar).not.toHaveBeenCalled();
+      // El nombre a medias se borra y el resumen lo muestra: consumidor final no lleva nombre.
+      expect(respuesta.texto).toContain('Cliente: consumidor final');
+      expect(respuesta.texto).not.toContain('Ana');
+      expect(respuesta.mostrar).toMatchObject({
+        aprobable: true,
+        destino: 'PROVEEDOR',
+      });
       expect(prisma.borrador.update).toHaveBeenCalledWith({
         where: { id: 'b1' },
         data: {
@@ -794,7 +819,9 @@ describe('ConversacionService', () => {
 
       expect(prisma.borrador.updateMany).not.toHaveBeenCalled();
       expect(prisma.emision.create).not.toHaveBeenCalled();
-      expect(respuesta.texto).toMatch(/^La conexión con Alegra cambió/);
+      expect(respuesta.texto).toMatch(
+        /^La conexión con Alegra cambió desde ese resumen, así que no lo aprobé/,
+      );
       expect(respuesta.mostrar?.destino).toBe('MANUAL');
     });
 
