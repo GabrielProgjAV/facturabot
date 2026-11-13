@@ -477,14 +477,57 @@ por fecha, todas las páginas (tope de 50 por día), Zod por página; `observati
 sin recortar, de nuestro lado. Otra cuenta o entrada inválida: ni un GET. Una página que falla o el
 tope superado lanzan un error incierto: nunca "no está" por una lectura a medias. Devuelve todas las
 coincidencias (dos = anomalía que decide el servicio, punto 6). Probado solo con el Alegra falso.
-**Por confirmar en la cuenta de prueba (pedirle OK a Gabriel antes; solo GET):** que `start` y
-`limit=30` paginan como se supone y el orden del listado (si entra una factura nueva mientras se
-pagina, ¿se corre una de una página a otra?). Consulta propuesta: `GET /invoices` con `date` de un día
-con facturas de prueba y `client_identification=222222222222`, `start=0` y `start=30`.
+**Límites de Alegra (investigado el 2026-11-12):**
+- 🟢 Documentación oficial (`developer.alegra.com/reference/get_invoices`): `limit` máximo **30** y
+  por defecto 30; más de 30 da error (código 903). `start` es una posición, no un id. Existen
+  `order_field` (`id`, `name`, `date`, `dueDate`, `status`), `order_direction` y `metadata` (total).
+- 🟢 Documentación oficial (`límite de request`): **150 peticiones por minuto por usuario**; al
+  pasarlo, **429** y hay que esperar a que termine el minuto. Cada respuesta trae
+  `X-Rate-Limit-Limit`, `X-Rate-Limit-Remaining` y `X-Rate-Limit-Reset` (segundos que faltan).
+- 🔴 No confirmado: límite diario, y si el bloqueo puede durar más de un minuto.
+- 🟢 Prueba GET en la cuenta de prueba (OK de Gabriel, `limit=2`, `start=0` y `start=2`, consumidor
+  final): HTTP 200; ids 9, 7 y luego 6, 5; los encabezados de límite llegan (150, quedan 149). **El
+  orden por defecto fue del más nuevo al más viejo**, aunque la documentación dice "ASC". Con ese
+  orden, una factura nueva del mismo día mientras se pagina corre las demás una posición: se repite
+  una (se deduplica por id), no se salta. Con OK de Gabriel se probó `order_field=id&order_direction=ASC`
+  (otro GET, `limit=2`, `start=0`): llegaron los ids 1 y 3, ascendente, así que **el orden sí cambia** y
+  `buscarPorReferencia` ya lo envía: las facturas nuevas quedan al final y no corren nada.
+- El tope de `buscarPorReferencia` son **50 páginas por día** (1.500 facturas), no 50 facturas. Una
+  reconciliación de 2 días con el tope lleno serían 100 peticiones, dentro de las 150 por minuto.
+
+**Siigo (para la fase 11, investigado el 2026-11-12):** 🟢 100 peticiones por minuto por empresa
+(10 en la empresa de pruebas), 429 al pasarlo, y recomiendan reintentos con espera exponencial.
+🔴 No confirmado: la ruta y el formato del PDF (la introducción dice que `/invoices` permite
+"consultar el PDF"; la referencia completa está en `siigoapi.docs.apiary.io`, sin leer).
+
+**Idea para después del piloto (Gabriel, 2026-11-12; no se implementa):** el comerciante pide una
+factura por fecha, valor o número y el bot le manda el PDF. Alegra: 🟢 `GET /invoices/{id}?fields=pdf`
+devuelve la **URL** del PDF (no el archivo); un borrador no tiene PDF; el listado permite buscar por
+`date`, `numberTemplate_fullNumber` y otros filtros, y `download` baja hasta 10 PDF. Siigo: el PDF
+existe según su introducción; ruta y formato 🔴 no confirmados. **El bot descarga el PDF y lo envía
+como archivo; nunca manda el enlace** (Gabriel, 2026-11-12): la URL puede ser pública o no caducar. El
+PDF tiene datos del cliente (Ley 1581): solo al chat de ventas autorizado y nunca a los logs.
 
 **Sigue:** punto 4 (trabajo `emitir`), con el segundo mensaje con el resultado.
 
-**Chat de administrador (propuesta de Gabriel, 2026-11-12; pendiente de su OK, no implementado):**
+**Chat de administrador: aprobado por Gabriel (2026-11-12), sin implementar todavía.**
+- Chat privado de Gabriel con el mismo bot, por `TELEGRAM_ADMIN_ID` (hay que enviarle `/start` una vez:
+  un bot no puede escribir primero). Sin la variable, los avisos van **solo al log**, nunca al chat de
+  ventas.
+- Contenido con las mismas reglas del log: categoría del error, id de la emisión, estado, qué revisar;
+  de la cuenta solo los últimos 4 caracteres. Nunca nombre, NIT, valores ni texto de los mensajes.
+- Avisos: token por vencer, vencido o mal formado (sale del chat de ventas); conexión fallida al
+  aprobar (venta MANUAL); emisión trabada tras agotar intentos (TIMBRANDO o DESCONOCIDO); NO_CREADA;
+  RECHAZADA; y dos o más facturas con la misma referencia al reconciliar.
+- **Duplicado:** si no se timbró, son borradores: "borra el borrador sobrante en Alegra". "Anular" solo
+  para facturas emitidas, y nunca como sugerencia automática.
+- **Antispam:** un aviso por problema (misma emisión y mismo estado, o el token caído) hasta que cambie,
+  no uno por cada falla.
+- **Ruta del menú:** la documentación oficial (Autenticación) dice "Configuración" → "API -
+  Integraciones con otros sistemas", pero para el token **clásico** (Basic). La del JWT de Integraciones
+  no está documentada: se quitó "Configuración → Integraciones" del aviso del token.
+
+Antes (lo que había):
 una variable `TELEGRAM_ADMIN_ID` con el id de Telegram de Gabriel, adonde van todos los avisos
 técnicos (token por vencer, conexión caída, emisión trabada), separados del chat de las ventas. Hoy
 no existe: `AvisoTokenService.avisoDelDia` antepone el aviso del token (que menciona "token" y el
