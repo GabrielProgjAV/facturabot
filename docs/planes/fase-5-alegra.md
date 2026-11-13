@@ -415,9 +415,32 @@ otro proceso del agente.
 - Este commit: plan con NO_CREADA → CANCELADA, el borrador con NIT, RECHAZADA → EMITIDA, la
   recuperación de TIMBRANDO (§4) y el choque `NOT VALID` / anonimización (§8).
 
-**En rojo a propósito:** 3 tests de `conversacion.int-spec.ts` (aprobación por versión). Aprueban sin
-`destino_factura`; se arreglan con el punto 2 de abajo. El CI de un PR de esta rama fallará en
-`test:int` hasta entonces.
+**Estado al cerrar la sesión del 2026-11-12 (tarde):** todo en verde. `pnpm test` 730 de 730,
+`test:int` 107 de 107 (los 3 que estaban en rojo se arreglaron con el punto 2), lint, Prettier y
+tipos. Rama subida, sin PR.
+
+Hecho en esta sesión (commits, en orden):
+
+- `ede169e` pendiente: emisión que agota intentos avisa por el chat; reintento al arrancar, uno por
+  arranque y respetando el modo de la fila (§4).
+- `65156b7` punto 1: `REGLAS_BD` al día y `reglas-bd.spec.ts`, que la compara con las migraciones.
+- `ddc6c27` test intermitente del token ficticio en el adaptador.
+- `2942f0b` punto 2: aprobación con destino (PROVEEDOR / SIN_FACTURA / MANUAL) y la `Emision`
+  PENDIENTE en la misma transacción; botón con el destino; comando "consumidor final".
+- `e3c83dc` textos para el comerciante (sin "token"), proveedor sin nombre fijo
+  (`NOMBRE_PARA_USUARIO`), botón de un resumen anterior; nota del segundo mensaje (punto 4).
+- `83518bb` punto 3: `buscarPorReferencia` (solo GET, observations exacto, todas las páginas).
+- `55074c7` límites de Alegra y Siigo, diseño del chat de administrador, PDF como idea futura.
+- `8fc9fa9` listado por id ascendente (comprobado con dos GET en la cuenta de prueba, con OK de
+  Gabriel) y aviso del token sin la ruta del menú no documentada.
+
+**Sigue, en este orden:**
+
+1. **Chat de administrador**, diseñado y **pendiente del OK de Gabriel** a la lista de archivos (ver
+   "Chat de administrador" más abajo). No se implementa sin ese OK.
+2. **Punto 4** (trabajo `emitir`), con el segundo mensaje con el resultado y los avisos al
+   administrador de emisión trabada, NO_CREADA, RECHAZADA y duplicado.
+3. Puntos 5 a 8 de la lista de abajo.
 
 **Falta del paso 6, en este orden (commit y push por cada cambio en verde):**
 
@@ -508,7 +531,8 @@ existe según su introducción; ruta y formato 🔴 no confirmados. **El bot des
 como archivo; nunca manda el enlace** (Gabriel, 2026-11-12): la URL puede ser pública o no caducar. El
 PDF tiene datos del cliente (Ley 1581): solo al chat de ventas autorizado y nunca a los logs.
 
-**Sigue:** punto 4 (trabajo `emitir`), con el segundo mensaje con el resultado.
+**Sigue:** el chat de administrador (con OK de Gabriel) y luego el punto 4; ver "Sigue, en este
+orden" al principio de esta nota.
 
 **Chat de administrador: aprobado por Gabriel (2026-11-12), sin implementar todavía.**
 - Chat privado de Gabriel con el mismo bot, por `TELEGRAM_ADMIN_ID` (hay que enviarle `/start` una vez:
@@ -526,6 +550,21 @@ PDF tiene datos del cliente (Ley 1581): solo al chat de ventas autorizado y nunc
 - **Ruta del menú:** la documentación oficial (Autenticación) dice "Configuración" → "API -
   Integraciones con otros sistemas", pero para el token **clásico** (Basic). La del JWT de Integraciones
   no está documentada: se quitó "Configuración → Integraciones" del aviso del token.
+- **Archivos propuestos (pendiente del OK de Gabriel a esta lista):**
+  - `config/env.schema.ts` (+ test) y `.env.example`: `TELEGRAM_ADMIN_ID`, opcional y numérico.
+  - Nuevo `mensajeria/avisos-admin.service.ts` (+ test): `avisar(clave, firma, texto)` con `Api` de
+    grammY hacia el chat del administrador; antispam en memoria (última firma por clave, `token` o
+    `emision:<id>`), así que tras un reinicio el mismo problema se avisa una vez más (persistirlo
+    sería un cambio de esquema, no propuesto).
+  - `emision/alegra/aviso-token.service.ts` (+ test): el aviso diario del token va al administrador y
+    sale del chat de ventas.
+  - `mensajeria/procesador-mensajes.ts` y `telegram.service.ts` (+ tests): se quita `avisoDelDia`
+    (lo que hoy antepone el aviso a la respuesta de ventas).
+  - `facturacion/conversacion.service.ts` (+ test): un resumen con destino MANUAL avisa al
+    administrador con la categoría del error (clave `token`).
+  - `app.module.ts`: registro del servicio.
+  - Los avisos de emisión (trabada, NO_CREADA, RECHAZADA, duplicado) usan este servicio, pero se
+    conectan en los puntos 4 a 6.
 
 Antes (lo que había):
 una variable `TELEGRAM_ADMIN_ID` con el id de Telegram de Gabriel, adonde van todos los avisos
