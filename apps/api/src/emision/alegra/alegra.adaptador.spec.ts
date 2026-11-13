@@ -623,8 +623,16 @@ describe('AlegraAdaptador.buscarPorReferencia (solo lectura)', () => {
 
     expect(encontradas.map((f) => f.idExterno)).toEqual(['7']);
     expect(encontradas[0].referencia).toBe(REFERENCIA);
-    // Una consulta por fecha, todas GET, con el filtro de cliente y fecha.
+    // Una consulta por fecha, todas GET, con el filtro de cliente y fecha, y por id ascendente.
     expect(alegra.pedidos.every((p) => p.metodo === 'GET')).toBe(true);
+    expect(
+      alegra.pedidos.every(
+        (p) =>
+          p.consulta.get('order_field') === 'id' &&
+          p.consulta.get('order_direction') === 'ASC' &&
+          p.consulta.get('limit') === '30',
+      ),
+    ).toBe(true);
     expect(
       alegra.pedidos.map((p) => [
         p.consulta.get('date'),

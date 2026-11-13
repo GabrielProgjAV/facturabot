@@ -20,8 +20,9 @@ export function textoAvisoToken(estado: EstadoTokenAlegra): string | null {
   switch (estado.estado) {
     case 'por_vencer':
       return estado.diasRestantes === 0
-        ? '⚠️ El token de Alegra vence hoy. Genera uno nuevo en Alegra (Configuración → Integraciones) y cámbialo en el .env.'
-        : `⚠️ El token de Alegra vence en ${estado.diasRestantes} día(s). Genera uno nuevo en Alegra (Configuración → Integraciones) y cámbialo en el .env.`;
+        ? // Sin ruta del menú: la documentación oficial solo da la del token clásico, no la del JWT.
+          '⚠️ El token de Alegra vence hoy. Genera uno nuevo en Alegra y cámbialo en el .env.'
+        : `⚠️ El token de Alegra vence en ${estado.diasRestantes} día(s). Genera uno nuevo en Alegra y cámbialo en el .env.`;
     case 'vencido':
       return '⚠️ El token de Alegra venció: la emisión está apagada. Los borradores siguen funcionando. Genera uno nuevo en Alegra y cámbialo en el .env.';
     case 'cuenta_invalida':

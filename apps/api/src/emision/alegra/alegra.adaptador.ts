@@ -380,6 +380,10 @@ export class AlegraAdaptador implements ProveedorFacturacion {
           client_identification: CONSUMIDOR_FINAL,
           start: String(pagina * POR_PAGINA),
           limit: String(POR_PAGINA),
+          // Sin esto, Alegra lista del más nuevo al más viejo (prueba del 2026-11-12): una factura
+          // nueva mientras se pagina correría las demás. Por id ascendente, las nuevas van al final.
+          order_field: 'id',
+          order_direction: 'ASC',
         });
         const facturas = this.validar(
           await this.pedir('GET', `/invoices?${consulta}`),
